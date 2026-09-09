@@ -54,6 +54,10 @@ server. Reaching a USB device from a page needs a **secure context**, so serve
 over HTTPS (or `http://localhost`) — a phone on the LAN has no localhost
 exemption, so testing from one means real HTTPS.
 
+In a spangap workspace, `spangap flashmon` serves both out of the build container at
+those same two paths — the one local address the flasher is reached at, which is
+also what lets a page lend that container its console (below).
+
 `<host>/flashmon` works with or without the trailing slash. Without it the
 document's base is the parent directory, which would send every relative URL in
 the page one level too high; most servers redirect a directory URL onto its slash
@@ -184,7 +188,13 @@ the session nothing.
 Images come from one catalogue at a time, and four things get a say — each
 outranking the one before it:
 
-1. **`stable`**, when nothing else has anything to say.
+1. **`stable`**, when nothing else has anything to say — or **`local`** when the
+   page is served from `localhost` over plain http, where it is being served by a
+   build container on this machine and `builds/local` is the catalogue that
+   container builds into. A local page is **pinned** there, so the device below
+   does not move it: with auto-flash on (which a local tab also starts with) a
+   board that reported some other catalogue would otherwise be flashed from a
+   catalogue nobody here is building.
 2. **The attached device.** spangap-core logs `build: catalogue <name>` on boot —
    the catalogue the running image was published from (`sys.build.catalogue`,
    baked in by `spangap make-builds`). The page moves there, so a board flashed
@@ -273,6 +283,48 @@ through opening has already put its terminal on screen, and every caller answers
 a failed open by opening again — so a failed open takes its own terminal down
 with it. Two terminals in one container is two cursors and two hidden input
 boxes, with the keystrokes going to whichever was built last.
+
+### Lending the console to the build container
+
+```
+tab -> hub   {"t":"hello","node":"f9fb74","host":"tbeam","fw":…,"hw":…}
+tab -> hub   {"t":"log","b":"<base64 of the raw serial bytes>"}     (continuous)
+hub -> tab   {"t":"cmd","id":41,"cmd":"gps"}
+tab -> hub   {"t":"reply","id":41,"ok":true,"out":"…"}
+tab -> hub   {"t":"bye"}
+```
+
+A page served from **localhost** is being served by `spangap flashmon` inside the
+build container, and that container has no USB: this tab is the only thing that
+can see the device. So it lends the console back. On load the page reads a token
+from the hub over its own origin, opens a WebSocket, and announces the node it
+is holding — the device id off the greeting, the hostname and running build as
+they arrive. From then on `spangap log` and `spangap cli` **in the container**
+read that device's console and run commands on it, with several tabs on several
+boards at once.
+
+Neither half is new work for the tab. The log is a copy of the bytes on their
+way to the terminal, taken after the frame parser has had them, so it carries
+exactly what is on screen and none of the framing. A command goes over the
+**same framed channel** the setup probes use: it never appears in the terminal,
+never lands in the stream the log side is reading, and answers on an id derived
+from the command, so a retry cannot collect the wrong reply. Firmware too old to
+speak frames answers the hub with "unframed" rather than having text typed at
+its console.
+
+**Why localhost is the whole test.** It is enforced by the browser rather than
+by us: a page served over https cannot open a `ws://` to localhost at all, so a
+deployed flashmon has no way to reach a hub even in principle, and never tries.
+Behind that, the hub mints a token per run and only ever hands it out over its
+own origin — no CORS headers, so no other page on the machine can read it — and
+requires it on the WebSocket. Nothing here is reachable off the machine: the
+container publishes the hub to the host loopback only.
+
+**Flashing is not part of it.** The hub never asks for a flash; auto-flash
+already covers it, since the catalogue the page is polling is the one the
+container builds into — a locally served tab starts on `local` and with
+auto-flash on for exactly that reason, so a build run in `builds/local` reaches
+every attached board with nothing asked of either side.
 
 ### On a touch screen
 
@@ -583,7 +635,8 @@ mkdir -p ../builds/stable
 cp builds.yaml.example ../builds/stable/builds.yaml   # then edit it
 ```
 
-`stable` is the catalogue the page starts on; a device's own
+`stable` is the catalogue a deployed page starts on (a locally served one starts
+on `local`); a device's own
 `build: catalogue`, `?build=<name>` and the panel's Build selector each move it
 (see *Which catalogue* above), which is how a bleeding-edge or
 customer-specific catalogue sits beside the public one on one deployment. A

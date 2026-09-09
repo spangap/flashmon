@@ -75,6 +75,18 @@ const barfill = $('barfill');
 
 const params = new URLSearchParams(location.search);
 
+// Served from localhost over plain http: this page is being served by `spangap
+// flashmon` out of a build container on this machine, which changes two
+// defaults (the catalogue and auto-flash, below) and is the one situation in
+// which the page will talk to a local server at all. The browser is what makes
+// the test trustworthy: a page served over https cannot open a ws:// to
+// localhost, so a deployment can never be mistaken for a local one.
+const SERVED_LOCALLY = location.protocol === 'http:'
+  && ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
+// The catalogue a local build writes into, and the one a locally served page
+// offers. `spangap flashmon` seeds it on first run.
+const LOCAL_CATALOGUE = 'local';
+
 // The tree of catalogues, beside the page in the deployment and under `spangap
 // dev` alike, so one relative path reaches it in both. Its own index.html lists
 // the catalogues that are meant to be found; one that is served but unlisted is
@@ -86,12 +98,19 @@ const cleanCatalogue = (s) => (s || '').replace(/[^A-Za-z0-9._-]/g, '');
 // otherwise. `?build=<name>` names one for this load, the settings panel's
 // Build selector changes it live, and an attached device that reports which
 // catalogue it was flashed from moves it there on its own (see setCatalogue).
-let CATALOGUE = cleanCatalogue(params.get('build')) || 'stable';
+//
+// A locally served page starts on `local` and STAYS there: that catalogue is
+// the one the container beside it builds into, which is the whole reason the
+// page is being served locally. Attaching a board flashed from somewhere else
+// must not quietly move the page — with auto-flash on, that would flash the
+// board from a catalogue nobody here is building.
+let CATALOGUE = cleanCatalogue(params.get('build'))
+  || (SERVED_LOCALLY ? LOCAL_CATALOGUE : 'stable');
 let CAT_BASE = `${BUILDS_BASE}${CATALOGUE}/`;
 // True once something other than the default has claimed the choice — a
-// `?build=`, or the user picking one. A device's own catalogue is adopted only
-// while nothing has.
-let cataloguePinned = !!cleanCatalogue(params.get('build'));
+// `?build=`, the local default, or the user picking one. A device's own
+// catalogue is adopted only while nothing has.
+let cataloguePinned = !!cleanCatalogue(params.get('build')) || SERVED_LOCALLY;
 
 // Filled from builds.yaml at boot. `project` brands the UI; `builds` is the
 // catalogue of entries (each a `name` matched against the detected hw-<board>).
@@ -163,6 +182,11 @@ function loadSettings() {
   for (const k of Object.keys(SETTINGS_DEFAULTS)) {
     if (typeof stored[k] === typeof SETTINGS_DEFAULTS[k]) s[k] = stored[k];
   }
+  // A locally served page is one half of a build-and-flash loop — the images it
+  // offers are being compiled a few metres away — so a tab opened there starts
+  // with auto-flash on, and the whole loop is `spangap make-builds`. Only as a
+  // default: unticking it is stored, and stored settings win here.
+  if (SERVED_LOCALLY && typeof stored.autoFlash !== 'boolean') s.autoFlash = true;
   // A baud in the URL is for firmware that logs somewhere other than the
   // console default, and outranks the stored one for this load only.
   const urlBaud = parseInt(params.get('monitor_baud'), 10);
@@ -944,6 +968,7 @@ async function attachStreams(m, mode = 'poke') {
           if (out && out.length) out = rpcFeed(m, out);
           if (!out || out.length === 0) continue;
           m.term.write(out);         // xterm decodes as UTF-8
+          if (m === monitor) hubLog(out);   // and to the container, if one is listening
           m.rngJustArmed = false;
           feedNetParser(m, out);     // watch the boot log for WiFi state lines
           // If the RNG-stuck watchdog was armed by an EARLIER chunk and more
@@ -2936,6 +2961,156 @@ function parseKv(text) {
   }
   return out;
 }
+
+// ── lending the console to the build container ──────────────────────────────
+// A page served from localhost is being served by `spangap flashmon` inside the
+// build container, and that container has no USB: this tab is the only thing
+// that can see the device. So the tab lends it the console. The server it talks
+// to is the hub — what the tabs attach to, and what routes between them and the
+// container's own `spangap log` / `spangap cli`.
+//
+//   tab -> hub   {"t":"hello","node":"f9fb74","host":"tbeam","fw":…,"hw":…}
+//   tab -> hub   {"t":"log","b":"<base64 of the raw serial bytes>"}
+//   hub -> tab   {"t":"cmd","id":41,"cmd":"gps"}
+//   tab -> hub   {"t":"reply","id":41,"ok":true,"out":"…"}
+//   tab -> hub   {"t":"bye"}
+//
+// Nothing here changes what the tab does: the log is a copy of the bytes that
+// were going to the terminal anyway, and a command goes over the same framed
+// channel the setup probes use, so it neither shows in the terminal nor
+// disturbs what is streaming through it.
+//
+// SERVED_LOCALLY is the whole trust boundary, and the browser enforces it
+// rather than us: a page served over https cannot open a ws:// to localhost at
+// all. The token behind it is what stops any OTHER page on this machine from
+// driving the boards — it is read from the hub over this page's own origin,
+// which no cross-origin page can do.
+const HUB_TICK_MS = 2000;
+const HUB_RETRY_MS = 5000;
+const HUB_PING_MS = 20000;
+let hubSock = null;         // the open socket, once it is open
+let hubOpening = false;
+let hubToken = null;
+let hubNextTry = 0;
+let hubDesc = null;         // what we last told the hub about the node we hold
+let hubPingAt = 0;
+
+
+function hubSend(obj) {
+  if (!hubSock || hubSock.readyState !== WebSocket.OPEN) return false;
+  try { hubSock.send(JSON.stringify(obj)); return true; } catch (_) { return false; }
+}
+
+async function hubConnect() {
+  if (hubSock || hubOpening || !SERVED_LOCALLY || Date.now() < hubNextTry) return;
+  hubOpening = true;
+  hubNextTry = Date.now() + HUB_RETRY_MS;
+  try {
+    if (!hubToken) {
+      // Same-origin, so this page can read it and a page from anywhere else
+      // cannot: the hub sends no CORS headers. A 404 here just means whatever
+      // is serving this page is not a hub, which is the ordinary case.
+      const res = await fetch('/hub/token', { cache: 'no-store' });
+      if (!res.ok) return;
+      hubToken = (await res.text()).trim();
+    }
+    const ws = new WebSocket(`ws://${location.host}/hub?token=${encodeURIComponent(hubToken)}`);
+    ws.onopen = () => {
+      hubSock = ws;
+      hubDesc = null;                 // whatever we hold is news to a new socket
+      // Kept off the page: the hub is the container's business, and the log
+      // panel opening itself on a lobby nobody has connected a device to yet
+      // would be a message about nothing.
+      console.debug('hub: attached');
+      hubAnnounce();
+    };
+    ws.onmessage = (e) => hubOnMessage(e.data);
+    ws.onerror = () => { /* onclose follows; the tick retries */ };
+    ws.onclose = () => {
+      if (hubSock === ws) {
+        hubSock = null;
+        hubDesc = null;
+        console.debug('hub: detached');
+      }
+      // A token that stopped working (a restarted hub minted a new one) must be
+      // re-read rather than retried forever.
+      hubToken = null;
+    };
+  } catch (_) {
+    /* nothing is serving a hub here — stay quiet and let the tick retry */
+  } finally {
+    hubOpening = false;
+  }
+}
+
+// Tell the hub which node this tab is holding, whenever that changes. The dev
+// id arrives first (off the greeting), the hostname and build a moment later,
+// so this is driven off a tick rather than off one event.
+function hubAnnounce() {
+  if (!hubSock) return;
+  const m = monitor;
+  const held = m && !m.gone && pairedUnit;
+  if (!held) {
+    if (hubDesc !== null) { hubSend({ t: 'bye' }); hubDesc = null; }
+    return;
+  }
+  const msg = {
+    t: 'hello',
+    node: pairedUnit,
+    // The greeting carries the hostname, so this is answered the moment the
+    // console is opened. Read off the session rather than off `hostNamed`,
+    // which is the setup flow's own record of having asked for one.
+    host: m.hostname && m.hostname !== HOSTNAME_DEFAULT ? m.hostname : null,
+    fw: m.deviceVersion
+      ? `${m.deviceCatalogue || ''}${m.deviceCatalogue ? '/' : ''}${m.deviceVersion}`
+      : null,
+    hw: m.hw || null,
+  };
+  const desc = JSON.stringify(msg);
+  if (desc === hubDesc) return;
+  if (hubSend(msg)) hubDesc = desc;
+}
+
+// A copy of what the terminal is about to render, for whoever is running
+// `spangap log` in the container. Frames are already out of these bytes.
+function hubLog(bytes) {
+  if (!hubSock || hubDesc === null || !bytes || !bytes.length) return;
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  hubSend({ t: 'log', b: btoa(s) });
+}
+
+async function hubOnMessage(text) {
+  let msg;
+  try { msg = JSON.parse(text); } catch (_) { return; }
+  if (msg.t !== 'cmd') return;
+  const reply = (extra) => hubSend({ t: 'reply', id: msg.id, ...extra });
+  const m = monitor;
+  if (!m || m.gone) return reply({ ok: false, why: 'this tab no longer holds the device' });
+  // Same channel, same rules as every other probe: one frame in flight, the id
+  // derived from the command, so a retry cannot collect the wrong answer.
+  if (!(await rpcEnsure(m))) return reply({ ok: false, why: 'unframed' });
+  const out = await rpcQuery(m, msg.cmd, 8000, 2);
+  if (out === null) return reply({ ok: false, why: 'the device did not answer' });
+  reply({ ok: true, out });
+}
+
+function hubTick() {
+  if (!SERVED_LOCALLY) return;
+  if (!hubSock) { hubConnect(); return; }
+  hubAnnounce();
+  // A tab the OS has put to sleep still holds the port, so the socket has to
+  // outlive the throttling; this rides the worker timers for the same reason
+  // the held-console stamp does.
+  if (Date.now() >= hubPingAt) {
+    hubPingAt = Date.now() + HUB_PING_MS;
+    hubSend({ t: 'ping' });
+  }
+}
+wtSetInterval(hubTick, HUB_TICK_MS);
+window.addEventListener('beforeunload', () => { if (hubSock) hubSend({ t: 'bye' }); });
 
 // Feed a raw serial chunk through a line splitter; hand each full line to the
 // net-log matcher. The decoder is streaming, so a chunk split mid-UTF-8 or

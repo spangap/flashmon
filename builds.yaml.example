@@ -3,7 +3,9 @@
 # writes index.html + timestamp beside them; the flasher page serves the
 # directory as `../builds/<catalogue>/` and reads both.
 #
-# `stable` is the catalogue the page starts on; an attached device's own
+# `stable` is the catalogue a deployed page starts on, and `local` the one a page
+# served from localhost starts on and stays on — that being the catalogue the
+# build container beside it writes into. Otherwise an attached device's own
 # `build: catalogue` line, `?build=<catalogue>` and the settings panel's Build
 # selector each move it. A catalogue directory holding a file named `.unlisted`
 # still builds and is still reachable by name — it is only left out of the tree's
