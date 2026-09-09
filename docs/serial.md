@@ -9,7 +9,7 @@ and its dialogs in [`index.html`](../flashmon/index.html). It is a
 pyserial and simply re-opens it by name.
 
 The device is not a fixed thing on the bus. Its CLI can move the console between
-two entirely different USB devices (`usb cdc` / `usb jtag`), an unplug mints a
+two entirely different USB devices (`usb cdc` / `usb jtag`), an unplug creates a
 fresh `SerialPort` object for what a person would call the same board, and Web
 Serial keeps permission grants that may or may not still open and delivers
 `connect`/`disconnect` events in whatever order the operating system felt like.
@@ -47,7 +47,7 @@ forces one road for a load.
 
 ### What the adapter adds
 
-The polyfill mints a fresh `SerialPort` on every call, and everything under
+The polyfill creates a fresh `SerialPort` on every call, and everything under
 [Only ports this tab was given](#only-ports-this-tab-was-given) rests on object
 identity, so `usbSerial()` wraps each `USBDevice` exactly once and every path
 hands back that one wrapper. It also carries the two things the session loop
@@ -194,7 +194,7 @@ Whatever it reports is true of the wire, so it splits the question in one run:
   is being lost above the transport.
 
 A device that re-enumerates under a **new** `USBDevice` costs the pairing: the
-port returns as a stranger and the session recovers through **Re-select port**,
+port returns as a new object and the session recovers through **Re-select port**,
 the same path that covers every other way a port comes back unrecognisable.
 
 ## A session per port, one terminal
@@ -270,7 +270,7 @@ exactly four places: the opening `connect()`, `repickPort()` behind the
 **Reconnect** dialog and the **Re-select port** button, a console move — each
 of those a `requestPort()` pick, which is to say a person pointing at an entry
 in the browser's chooser — and the verified adoption of a returning board (see
-[A board that returns as a stranger](#a-board-that-returns-as-a-stranger)),
+[A board that returns as a new port object](#a-board-that-returns-as-a-new-port-object)),
 which rests on the device naming itself over the wire. `isOurs(p)` is
 `pickedPorts.includes(p)`, plain object identity, and it is the whole of the
 test the `connect` handler applies before reclaiming a port directly.
@@ -326,8 +326,7 @@ errors the stream for good, and the port builds a fresh pair only when asked
 again. The device is fine, the port is still there, and the session is neither
 `gone` nor detached — so none of the machinery below is reached.
 
-Left alone this presents as a session that is alive on screen and deaf and mute
-in fact: no device output, and typing that goes nowhere. Worse, it is silent at
+Left alone this presents as a session that is alive on screen while reading and writing nothing: no device output, and typing that goes nowhere. Worse, it is silent at
 both ends — the reader loop simply ends, and a write rejects into a `catch` that
 was written for a port that went away.
 
@@ -365,7 +364,7 @@ port**, and for the port a handover moved away from (`priorSession`). Every othe
 `connect` reclaims the port if it is ours and the session is detached. "Detached"
 is ground truth — `gone || !reader` — not the `gone` flag alone, which has
 repeatedly gone stale when a `disconnect` was missed, presenting as a
-live-looking session that is mute and deaf until the page is reloaded.
+live-looking session that reads and writes nothing until the page is reloaded.
 
 `reclaimPort(p, attempts)` retries `open()` over the dead session, because a port
 rarely accepts one the instant it appears. On success it says
@@ -402,7 +401,7 @@ that returns on the same object is picked up for free however long it took. At
 and says so in the stream. **The loop raises no dialog** — see "departure is not
 evidence" above.
 
-### A board that returns as a stranger
+### A board that returns as a new port object
 
 A board that actually left the bus — an unplug, a `usb down`, a long power loss
 — re-enumerates, and comes back as a **fresh `SerialPort` object**: the same
@@ -423,7 +422,7 @@ match   →           adopt: replace the dead twin in pickedPorts, pin, reclaim
 mismatch→           close, broadcast it (the owner may be waiting), leave the port
 ```
 
-The connect event is not the only way in: while the session is bereft — no
+The connect event is not the only way in: while the session has no port on the bus — no
 picked port even on the bus — each rescan tick also sweeps `getPorts()` and
 feeds matching grants to the same queue, so a port whose one-shot event fired
 before the session could hear it (or never fired) is still found. The sweep
@@ -454,11 +453,11 @@ nothing identifiable across a ~4 s window of repeated CRs gets three rounds. A
 port whose device left mid-probe burns no budget at all: a bus still bouncing
 after re-enumeration retires that object without a word and the successor
 object gets its own probes. Retirement is terminal per port object, its
-epitaph said once — the sweep re-encounters the same object every tick, and
+closing line said once — the sweep re-encounters the same object every tick, and
 without a terminal state each encounter would re-print it. The whole probe
 lifecycle is diagnostics, not session narration: the terminal shows only what
 the session did (`gone`, `came back`), and every probe decision — arrival,
-decline and why, outcome, epitaph — goes to the browser console (`adopt: …`),
+decline and why, outcome, closing line — goes to the browser console (`adopt: …`),
 so a return that goes nowhere is diagnosable rather than silent.
 
 Nothing in the probe may wedge: every teardown await is deadline-bounded and
@@ -475,28 +474,28 @@ carried over a pick. A tab that never saw the field (firmware without it, or a
 board that never spoke) has nothing to verify against and never probes; it
 keeps today's behaviour, the rescan and **Re-select port**.
 
-### The roster, and the startup lobby
+### The known-device list, and the start screen
 
-Every identified node also lands in the **roster** (`localStorage`, so
+Every identified node also lands in the **known-device list** (`localStorage`, so
 origin-wide and persistent): dev id → hostname, the USB identities its
 transports wear, when it was last seen. It is bookkeeping, never proof — a
 grant has no page-visible identity, so nothing is ever opened as a session on
-the roster's word alone.
+the known-device list's word alone.
 
-What it buys is the **startup lobby**, the page's one front door (only the
-`?usbprobe=1` wire test keeps the plain Start button): on load the roster's
+What it buys is the **start screen**, the page's one front door (only the
+`?usbprobe=1` wire test keeps the plain Start button): on load the known-device list's
 nodes are shown by hostname instead of a chooser. The rows are verified live
 with the same identity probe adoption uses — walk `getPorts()` (gesture-free),
-probe each present port whose USB identity the roster knows, read
+probe each present port whose USB identity the known-device list knows, read
 `dev …, host …` off the greeting, close — and only a row that answered becomes
-clickable; the click connects to that port with no chooser. Ports the roster
+clickable; the click connects to that port with no chooser. Ports the known-device list
 has never seen are not probed at all, so a serial device this origin granted
-for some other purpose is never poked. An empty roster reads "No known devices
+for some other purpose is never poked. An empty known-device list reads "No known devices
 found". **Other device…** is the plain chooser, and the only road for a
-stranger. A failed connect returns to the lobby, which re-probes — a node
+board the tab has never seen. A failed connect returns to the start screen, which re-probes — a node
 taken between probe and click comes back labeled busy rather than ready.
 
-The lobby carries the **reason** it came back, in its own dialog. It covers the
+The start screen carries the **reason** it came back, in its own dialog. It covers the
 whole page, so the intro screen the failure is also written onto is behind it:
 without the reason on the dialog itself, a port that would not open presents as
 the front door reappearing for no reason — the pick was made, the chooser
@@ -561,7 +560,7 @@ all of which force the host to re-enumerate. Note that the firmware can be wide
 awake, holding its `usb` lock, and reading SOF activity throughout: SOF
 detection, the data ring and the control endpoint are three different things.
 
-A cancelled chooser says nothing — the person changed their mind, and the lobby
+A cancelled chooser says nothing — the person changed their mind, and the start screen
 is the answer, not an error.
 
 Busy is known two ways, cheap one first. A tab holding a console **stamps a

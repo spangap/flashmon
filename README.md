@@ -73,7 +73,7 @@ straight out of the workspace, at the same two paths.
 
 ## What it does when you connect
 
-The page opens on the **startup lobby**, its one front door: the nodes this
+The page opens on the **start screen**, its one front door: the nodes this
 browser has met before, by hostname — not the chooser's `/dev/cu.usbmodem…`
 rows — each verified live before it is offered, by opening the granted port and
 reading the device's own `dev` id off its greeting (no gesture needed on a
@@ -82,9 +82,9 @@ connects. A node another flashmon tab is using says so without being touched —
 tabs holding a console stamp a heartbeat in `localStorage` — and a browser that
 has met nothing just reads "No known devices found". **Other device…** is the
 serial-port chooser, which the browser only opens in response to a user
-gesture, and the only road for a stranger. Either way the pick opens the port,
+gesture, and the only road for a board the tab has never seen. Either way the pick opens the port,
 shows the **serial monitor** — and the device **says which board it is**,
-unasked. A pick that does not open lands back on the lobby with the reason on
+unasked. A pick that does not open lands back on the start screen with the reason on
 the dialog itself: the usual one is another program holding the port, and the
 browser's own words for it name no cause.
 
