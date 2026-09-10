@@ -1,4 +1,4 @@
-// flashmon — browser firmware flasher / serial monitor.
+// flashmon — browser firmware flashing / serial monitor.
 //
 // Connecting only opens the port: the device is not touched, not reset, and the
 // monitor shows whatever it is already doing. It is then ASKED which board it
@@ -1054,7 +1054,7 @@ async function closeMonitor() {
   await detachStreams(m);
   m.resizeObserver.disconnect();
   m.term.dispose();
-  setMonTitle(null);   // back to the flasher landing: drop the device hostname
+  setMonTitle(null);   // back to the flashmon landing: drop the device hostname
 }
 
 // Hard-reset into the app: assert RTS (EN low = reset), hold, then release. DTR
@@ -2202,7 +2202,7 @@ function updateBaudVisibility(port) {
 // the 1 Hz keep-alive is what holds the stream open and the same 1 Hz tick is the
 // stall watchdog — on window timers a background tab would clamp both to a minute,
 // the meter would stop streaming and the watchdog would then tear the session down.
-// So every FNB58 timer runs on the flasher's worker timers (wtSetInterval, and
+// So every FNB58 timer runs on flashmon's worker timers (wtSetInterval, and
 // useWorkerTimers around the sleeping open/recover/drain paths). Only the graph is
 // left to the tab: requestAnimationFrame pauses while hidden, the ring keeps
 // filling from the reports, and the first visible frame draws the history.
@@ -2788,7 +2788,7 @@ if ('hid' in navigator)
 // is typing, and gives every command sent a reply to confirm against.
 //
 // The contract (wire format, ids, truncation, the marker) is
-// spangap-core/docs/framed-rpc.md. flashmon.py implements the same thing.
+// spangap-core/docs/framed-rpc.md.
 //
 //     <magic:4> <id:1> <len:2 big-endian> <payload:len>
 const RPC_MAGIC = Uint8Array.of(0xf5, 0x53, 0x47, 0x01);   // 0xF5 can't open UTF-8
@@ -5828,7 +5828,7 @@ async function runPendingFlash() {
   const host = m.hostname;                    // …and whose board the flash screen names
   // Decided here, before the write, from the catalogue's own account of the
   // image: what comes back up owns its setup, so this page steps out of it for
-  // the rest of the session. A later re-flash of a flasher-onboarded image
+  // the rest of the session. A later re-flash of a flashmon-onboarded image
   // hands it back.
   deviceOnboards = imageOnboardsItself(name);
   closeDialogs(m);                            // clear any dialog on the way out
@@ -6272,7 +6272,7 @@ async function loadVersions() {
 // True when the catalogue says this image sets a fresh node up from its own
 // screen. Then this page has nothing to ask: asking anyway would race the
 // device's own dialogs for the same answers, and the second answer wins for no
-// reason anybody could predict. Unmarked images are the flasher's to set up,
+// reason anybody could predict. Unmarked images are flashmon's to set up,
 // which is the safe default — a node nobody asks and that cannot ask for itself
 // is a node nobody set up.
 function imageOnboardsItself(name) { return ONBOARDING[name] === 'device'; }
@@ -6617,7 +6617,7 @@ async function boot() {
 
   // Watch the catalogue for the rest of the session, so a build published while
   // the page is open is picked up without a reload. Worker-held like the other
-  // background polls: a hidden tab is exactly when an unattended flasher is
+  // background polls: a hidden tab is exactly when an unattended flashmon is
   // waiting for a build to land. Branding (project/slug) is left as booted.
   wtSetInterval(pollStamp, STAMP_POLL_MS);
 

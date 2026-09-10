@@ -1,6 +1,6 @@
 # flashmon
 
-A tiny, static, browser-based firmware **flasher + serial monitor** for spangap
+A tiny, static, browser-based **firmware flashing and serial monitor** tool for spangap
 devices. Point a Chromium browser at it, plug in a device over USB, and it drops
 into an interactive serial monitor without touching the device, asks it which
 board it is, and offers the right firmware image to flash — no install, no
@@ -23,8 +23,6 @@ deployment and under `spangap dev` alike, so there is no base URL to configure.
     flashmon/                   ← everything served to the browser (the web root)
       index.html
       flashmon.js
-      flashmon.py               ← single-file terminal flasher (for non-browser users)
-      <project>-flashmon        ← branded copy of flashmon.py (gitignored artifact)
       detect/spangap_detect.bin ← the peripheral detector (checked in)
       devices/                  ← board photos for the device window (optional)
       vendor/                   ← esptool-js, JSZip, xterm.js, web-serial-polyfill
@@ -55,7 +53,7 @@ over HTTPS (or `http://localhost`) — a phone on the LAN has no localhost
 exemption, so testing from one means real HTTPS.
 
 In a spangap workspace, `spangap flashmon` serves both out of the build container at
-those same two paths — the one local address the flasher is reached at, which is
+those same two paths — the one local address flashmon is reached at, which is
 also what lets a page lend that container its console (below).
 
 `<host>/flashmon` works with or without the trailing slash. Without it the
@@ -64,9 +62,8 @@ the page one level too high; most servers redirect a directory URL onto its slas
 and settle it, and the page pins its own base for the servers that don't.
 
 Deploying is copying both directories to the server (e.g. `rsync` them) — so the
-**untracked generated artifacts** ride along and get served even though they
-aren't tracked: the whole `builds/` tree, and the branded `<project>-flashmon`
-script. Run `spangap make-builds` (below) before deploying so they're present.
+**untracked** `builds/` tree rides along and gets served even though it is not
+tracked. Run `spangap make-builds` (below) before deploying so it is present.
 
 Under `spangap dev` neither is copied anywhere: the dev server mounts both
 straight out of the workspace, at the same two paths.
@@ -245,7 +242,7 @@ The image is fetched and checked while the monitor is still open and the device
 still running, so cancelling costs the session nothing — nothing has been written,
 and the monitor carries on. Without a detection run there is nothing to compare
 against and no warning is raised, since the boot log never states where the store
-is. `flashmon.py` makes the same check and asks the same question on the terminal.
+is.
 
 ### Flashing survives a background tab
 
@@ -400,7 +397,7 @@ before a port is picked as much as during a session):
   FNB58 button is hidden. One shared LocalSettings timestamp drives that cooldown
   and also keeps two tabs off the same meter. If a meter does freeze anyway,
   unplug/replug it. See [`docs/fnb58.md`](docs/fnb58.md) for the HID protocol and
-  rendering. Browser only — `flashmon.py` has no equivalent.
+  rendering.
 
 ### Setting up a fresh device
 
@@ -496,7 +493,7 @@ takes every frame this page sends out of the busiest part of it.
 
 Two surfaces asking for the same password at the same moment is a race whose
 winner nobody can predict, and a board with a panel in the operator's hands is
-the better of the two. An unmarked image is the flasher's to set up, which is the
+the better of the two. An unmarked image is flashmon's to set up, which is the
 safe default: a build that cannot ask for itself and is never asked is a node
 nobody set up.
 
@@ -512,7 +509,7 @@ replayed transcript of the commands. Without the marker they are typed at the
 console in one batch.
 
 Which dialogs open is still decided from the boot log here; only the sending is
-framed. `flashmon.py` pulls that state with queries too.
+framed.
 
 ### A tab only ever opens ports you picked
 
@@ -565,64 +562,6 @@ there instead — see
 [spangap-core's usb-console](../spangap-core/docs/usb-console.md). Once a session
 is open, the hostname in the monitor's title bar is what identifies the board.
 
-## The terminal flasher — `flashmon.py`
-
-For people who can't run a Chromium browser, `flashmon.py` does the same flow
-from a plain terminal: pick a port, probe the chip, RAM-load the detector, flash
-the matching image, then open a full-screen serial monitor.
-
-> `flashmon.py` still expects the catalogue inside the web root
-> (`flashmon.yaml` + `builds/`) and reads `flasher_args.json` out of an image
-> zip. Both moved — the catalogue to `../builds/<catalogue>/`, the flashing
-> instructions to the `<project>.esptool` argfile in the zip — so it needs its
-> own pass before it works against a current deployment. The browser flasher is
-> unaffected.
-
-It reads the same config + images + `detect/` the browser does — either from a
-served deployment or from a local flashmon folder:
-
-```sh
-./flashmon.py --url https://<host>/flashmon/   # a served deployment
-./flashmon.py --dir flashmon                    # a local flashmon/ folder
-```
-
-### How it learns about the device
-
-`flashmon.py` **asks** the device rather than scraping its boot log. Firmware
-that supports it prints one marker line very early in boot —
-`serial: framed rpc v1` — after which flashmon runs ordinary CLI commands over a
-framed side-channel on the same console port and reads exactly their output:
-`show sys.build` for the running image's identity, `show sys.flash` for the
-board's real flash geometry, `auth -O` for the password state, `net -O` for the
-WiFi state and IP, `net scan -O` for the networks in range. Provisioning goes out the same way, so it can't collide with someone
-typing at the CLI and each command has a reply to confirm against. The frames
-are swallowed out of the byte stream, so the log and the interactive CLI look
-exactly as they always did. The wire format is
-[spangap-core/docs/framed-rpc.md](../spangap-core/docs/framed-rpc.md), the
-`key=value` replies are
-[onboarding-output.md](../spangap-core/docs/onboarding-output.md).
-
-Attaching to an already-running device misses the marker, so before it first
-needs frames flashmon probes once; the probe is answered on firmware that speaks
-them and undone with a Ctrl-C on firmware that doesn't. If neither the marker
-nor the probe lands, flashmon knows nothing about the device beyond what esptool
-read off the chip. It stays a monitor and a
-flasher: it still offers an image (an unknown build has nothing to compare
-against), and there is nothing to set up, because a device old enough not to
-speak frames has long since been through setup. What such a device costs is its
-web-UI address — F8 opens the default `<project>.local` rather than its real
-hostname, until it is flashed and reboots. Nothing is inferred from log text, so
-nothing can be inferred wrongly.
-
-`flashmon.py make-brand` writes a **branded** copy of it next to it, named for the project —
-`<project>-flashmon` (e.g. `reticulous-flashmon`). It's the identical script with
-the deployment's `url:` baked into its `PROJECT_URL`, so a downloaded copy runs
-with **no arguments** and already knows where to fetch its config and images.
-That branded script is what you serve for a one-line `curl`-and-run, and it's the
-entry point inside the offline `<project>-flashmon.zip` bundle (where it finds its
-config/images/tool-wheels alongside itself and runs fully offline). Like the
-images, it's a gitignored generated artifact (`*-flashmon`), not tracked source.
-
 ## Configuration — `builds/<catalogue>/builds.yaml`
 
 flashmon is a **generic installer**: it ships no committed config, so anyone can
@@ -662,7 +601,7 @@ Each entry names an image and gives the `spangap build` invocation that produces
 it.
 
 `onboarding: device` on an entry says that image sets a fresh node up from its
-own screen, so the flasher asks for nothing after writing it (above). It reaches
+own screen, so flashmon asks for nothing after writing it (above). It reaches
 the page through the generated `index.html`, as `data-onboarding` on that image's
 link — an attribute rather than a comment, because a comment is only ever *near*
 the row it is about while an attribute is part of it: one parser pass reads the
@@ -702,7 +641,7 @@ shares that datetime. Two more things go into the build and come back out of the
 running device: the entry's name as `SPANGAP_BUILD_DIST` (reported as
 `sys.build.dist`) and the catalogue directory's own name as
 `SPANGAP_BUILD_CATALOGUE` (reported as `sys.build.catalogue`, and logged on boot
-as `build: catalogue <name>`). That second one is how a device tells the flasher
+as `build: catalogue <name>`). That second one is how a device tells flashmon
 which catalogue it came from, and so which listing its stamp belongs to.
 
 Each entry it builds also loses its **older images** — same entry, same

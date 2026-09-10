@@ -25,7 +25,7 @@
 // one whose identity can be read passively, off buses alone, is settled before
 // any probe that DRIVES a power-enable or reset GPIO — because that pin means
 // something else entirely on the board it is not looking at. Every probe that
-// drives a rail releases it again when it fails, and the flasher hard-resets the
+// drives a rail releases it again when it fails, and flashmon hard-resets the
 // chip into real firmware when the run ends.
 //
 // Nothing here writes flash. Every check is a bus read or a scratch-register
@@ -581,9 +581,9 @@ static bool det_state_partition(char *out)
 
 void app_main(void)
 {
-    // One shot: the flasher captures this output over serial, folds it into the
+    // One shot: flashmon captures this output over serial, folds it into the
     // banner, then resets the chip back into real firmware. Delay first so the
-    // flasher's capture reader is attached before any line is printed.
+    // flashmon's capture reader is attached before any line is printed.
     vTaskDelay(pdMS_TO_TICKS(800));
 
     // The probe trace is the point of running this at all — a board that was NOT
@@ -611,7 +611,7 @@ void app_main(void)
     for (size_t i = 0; i < sizeof(BOARDS) / sizeof(BOARDS[0]) && !hw; i++)
         hw = BOARDS[i]();
 
-    // The machine-readable answer the flasher reads out of the capture. The probe
+    // The machine-readable answer flashmon reads out of the capture. The probe
     // trace above is for a person; this line is the result.
     if (hw) printf("DETECT: DETECTED: %s\n", hw);
     else    printf("DETECT: no board matched\n");
@@ -626,7 +626,7 @@ void app_main(void)
 
     // Hand the chip back to the ROM download loader rather than idling here.
     //
-    // The flasher reaches this detector through the ROM loader and, on most
+    // flashmon reaches this detector through the ROM loader and, on most
     // boards, leaves it the same way — a reset line it can drive. A board whose
     // USB is on the OTG controller rather than USB-Serial-JTAG has no such line:
     // esptool's reset sequences are DTR/RTS or the Serial-JTAG unit's own, and
@@ -641,7 +641,7 @@ void app_main(void)
     // loader is what their next step wants too.
     //
     // The flag lives in the RTC domain and outlasts an ordinary reset, so it is
-    // the flasher's job to clear it before sending the device back to its
+    // flashmon's job to clear it before sending the device back to its
     // firmware — otherwise every boot lands in the loader. flashmon.js does that
     // (`clearForceDownloadBoot`); esptool clears it in its own hard reset for the
     // same reason.

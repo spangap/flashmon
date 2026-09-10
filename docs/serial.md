@@ -4,9 +4,7 @@ How flashmon keeps one monitor session alive while the device underneath it
 comes, goes, and changes what it looks like on the USB bus. This is the
 reference behind the console-handover and reconnect code in
 [`../flashmon/flashmon.js`](../flashmon/flashmon.js) (search `console handover`)
-and its dialogs in [`index.html`](../flashmon/index.html). It is a
-**browser-only** concern — `flashmon.py` talks to a device node through
-pyserial and simply re-opens it by name.
+and its dialogs in [`index.html`](../flashmon/index.html).
 
 The device is not a fixed thing on the bus. Its CLI can move the console between
 two entirely different USB devices (`usb cdc` / `usb jtag`), an unplug creates a
@@ -532,7 +530,7 @@ Failed to set custom baud rate: Device error (83)
 ```
 
 behind a rejection that reads exactly like a busy port. It is worth knowing
-which side that puts the fault on: a terminal monitor opening the same port
+which side that puts the fault on: `spangap monitor` opening the same port
 succeeds, because pyserial uses macOS's `B115200` termios constant and asks the
 device nothing — so "the browser can't open it but my monitor can, and my
 monitor sees no data either" is one fault, in the chip, not two.

@@ -3,8 +3,7 @@
 How flashmon graphs live current draw from a FNIRSI FNB58/FNB48 USB power meter
 while the serial monitor runs. This is the reference behind the FNB58 code in
 [`../flashmon/flashmon.js`](../flashmon/flashmon.js) (search `FNB58`) and its
-markup/styles in [`index.html`](../flashmon/index.html). It is a **browser-only**
-feature — `flashmon.py` has no equivalent, because it rides WebHID.
+markup/styles in [`index.html`](../flashmon/index.html). It rides WebHID.
 
 The meter is a USB **HID** device, not a serial port, so it opens over
 **WebHID** in the same tab as the device's Web Serial monitor. The two live
@@ -32,7 +31,7 @@ round to a whole number. The meter streams at roughly **100 Hz** (four samples
 per ~40 ms report), but nothing downstream trusts that rate — see timestamps
 below.
 
-## Background tabs: every FNB58 timer lives in the flasher's worker
+## Background tabs: every FNB58 timer lives in flashmon's worker
 
 A hidden tab clamps window timers to one per second, and after five minutes
 hidden to roughly one per minute. Input reports are unaffected — they keep
@@ -42,7 +41,7 @@ and the short sleeps in the open/recover/drain paths. Left on window timers, a
 backgrounded tab stops feeding the meter, the meter stops streaming, and the
 watchdog then tears the session down: switching tabs would drop the graph.
 
-So the FNB58 shares the worker the flasher already uses for un-throttled timers
+So the FNB58 shares the worker flashmon already uses for un-throttled timers
 (`wtSpawn`, the same one that keeps a flash from crawling in a hidden tab):
 
 - The keep-alive/watchdog tick is `wtSetInterval(fnbTick, 1000)` — a

@@ -118,7 +118,7 @@ value only that part returns.
 
 ## A board with no reset line
 
-Everything above assumes the flasher can put the chip in the ROM loader itself.
+Everything above assumes flashmon can put the chip in the ROM loader itself.
 esptool does that over DTR/RTS, or — when it recognises the USB-Serial-JTAG PID
 (`303A:1001`) — with that unit's own sequence. A board whose USB is on the S3's
 **USB-OTG** controller instead has neither: it reports `303A:0009` (the PID is
@@ -342,7 +342,7 @@ chip**, not by re-deriving that math:
 This means a change to spangap's floor/alignment logic can't desync the detector:
 it reads the store that exists, wherever it landed.
 
-The flasher keeps this line: a flash whose sectors reach into that region would
+flashmon keeps this line: a flash whose sectors reach into that region would
 wipe the device's own settings, keys and files, so it warns and asks before
 writing (see the README). A chip that reports no store gets no warning — there is
 nothing to lose there.
