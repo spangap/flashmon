@@ -246,8 +246,18 @@
   #device-photo{display:block;width:100%;max-height:230px;object-fit:contain;
        background:#0d1117;border:1px solid var(--line);border-radius:8px;margin:0 0 1rem}
   #device-photo[hidden]{display:none}
+  /* The fact list is the probe's own trace — a screenful of bus reads that only
+   * matters when the answer above it is wrong or missing. It is folded away, so
+   * the window says which board this is and nothing else until asked. */
+  #device-details{margin:0}
+  #device-details > summary{display:inline-flex;align-items:center;gap:.35rem;
+       padding:.2rem 0;color:var(--muted);font-size:.85rem;cursor:pointer;list-style:none}
+  #device-details > summary::-webkit-details-marker{display:none}
+  #device-details > summary::before{content:"▸";font-size:.7rem}
+  #device-details[open] > summary::before{content:"▾"}
+  #device-details > summary:hover{color:var(--fg)}
   #device-facts{display:grid;grid-template-columns:auto 1fr;gap:.35rem .8rem;font-size:.85rem;
-       align-items:baseline}
+       align-items:baseline;margin:.6rem 0 0}
   #device-facts dt{color:var(--muted)}
   #device-facts dd{margin:0}
   #device-facts .lines{white-space:pre-wrap;font:12px/1.5 ui-monospace,SFMono-Regular,monospace}
@@ -568,7 +578,10 @@
         <h2 id="device-title"></h2>
         <p class="sub" id="device-sub"></p>
         <img id="device-photo" alt="" hidden>
-        <dl id="device-facts"></dl>
+        <details id="device-details">
+          <summary>View details</summary>
+          <dl id="device-facts"></dl>
+        </details>
         <p id="flash-warn" hidden></p>
         <div class="row">
           <button id="device-ok" class="btn-primary" type="button">OK</button>

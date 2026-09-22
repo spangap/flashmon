@@ -5519,6 +5519,11 @@ function renderDeviceBox() {
 function showDeviceBox(facts) {
   deviceFacts = facts;
   renderDeviceBox();
+  // A window that opens starts folded: the board's name is the answer, and the
+  // trace under it is for the times that answer is wrong or missing. Only the
+  // open itself resets it — the late-landing facts repaint through
+  // renderDeviceBox, which leaves a reader's own choice alone.
+  if ($('device-details')) $('device-details').open = false;
   if ($('device-overlay')) $('device-overlay').hidden = false;
 }
 

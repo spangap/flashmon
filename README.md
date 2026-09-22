@@ -123,10 +123,13 @@ with its identity, or none at all. Then the connect falls back to the detection
 run below.
 
 What is known either way is shown in the **device window** over the terminal: the
-board and its photo, where the device keeps its own data, which firmware it is
-running, and what the catalogue has for it — plus the chip facts and peripherals
-when a detection run read them. The catalogue part arrives a few seconds later
-with the device's build stamp, and the window repaints around it; the flash is
+board, its photo, and — behind **View details** — where the device keeps its own
+data, which firmware it is running, what the catalogue has for it, and the chip
+facts and peripheral trace a detection run read. The name of the board is what
+the window is opened for; the trace under the fold is what it takes to argue with
+that name, so it is a click away rather than a screenful in the way. The
+catalogue part arrives a few seconds later with the device's build stamp, and the
+window repaints around it, leaving the fold as the reader left it; the flash is
 offered **in the same window**, under the facts it follows from.
 
 Tick **No reset** in the settings panel (the gear, top right) to stop before the
