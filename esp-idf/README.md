@@ -1,6 +1,8 @@
 # spangap board-detection binary
 
-A tiny ESP32-S3 app that runs every board straddle's own `detect_hw()` in turn
+A tiny RAM app — one per chip, ESP32-S3 by default, ESP32-P4 with
+`make TARGET=esp32p4` — that runs every board straddle's own `detect_hw()` for
+that chip in turn
 and stops at the first that answers. It is uploaded into SRAM by flashmon —
 nothing is written to flash — and used only where a device cannot say for itself
 which board it is (see [`../docs/detect.md`](../docs/detect.md)).

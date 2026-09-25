@@ -37,13 +37,21 @@
 #include "esp_flash.h"
 #include "esp_partition.h"
 #include "esp_system.h"          /* esp_restart, to hand the chip back to the ROM */
+#if CONFIG_IDF_TARGET_ESP32S3
 #include "soc/rtc_cntl_reg.h"    /* RTC_CNTL_OPTION1_REG / _FORCE_DOWNLOAD_BOOT */
+#endif
 #include "detect_probe.h"
 
 // ── the copies ───────────────────────────────────────────────────────────────
 // Each block below is one straddle's detect.cpp, function renamed and its board
 // header's pin macros written out (a standalone detector stages no straddles, so
 // it has no board headers to include). Everything else is verbatim.
+//
+// A detector binary is built for one chip, and holds the boards on that chip:
+// a board on another one has other pins under the same numbers, so its probe
+// has nothing to say here and could only drive the wrong thing.
+
+#if CONFIG_IDF_TARGET_ESP32S3
 
 // hw-nibble-zero — passive: no rail to drive, nothing but bus reads.
 #define NZ_OLED_SDA    8
@@ -512,6 +520,60 @@ static const char *detect_hw_lilygo_tdeck(void)
     return "hw-lilygo-tdeck";
 }
 
+#endif  // CONFIG_IDF_TARGET_ESP32S3
+
+#if CONFIG_IDF_TARGET_ESP32P4
+// hw-waveshare-p4-43 — the audio pair read passively, then the GT911 after a
+// reset pulse on GPIO 23, released again when it does not answer.
+#define WP4_I2C_SDA      7
+#define WP4_I2C_SCL      8
+#define WP4_ES8311_ADDR  0x18
+#define WP4_ES7210_ADDR  0x40
+#define WP4_TP_RST_PIN   23
+#define DETECT_CHIPID1_REG  0xFD
+#define DETECT_CHIPID2_REG  0xFE
+
+static const char *detect_hw_waveshare_p4_43(void)
+{
+    if (!detect_flash_mb(32)) return NULL;
+
+    detect_i2c_t h;
+    if (!detect_i2c_open(&h, WP4_I2C_SDA, WP4_I2C_SCL)) return NULL;
+
+    uint8_t a = 0, b = 0;
+    bool codec = detect_i2c_rd(&h, WP4_ES8311_ADDR, DETECT_CHIPID1_REG, &a, 1) &&
+                 detect_i2c_rd(&h, WP4_ES8311_ADDR, DETECT_CHIPID2_REG, &b, 1) &&
+                 a == 0x83 && b == 0x11;
+    uint8_t c = 0, d = 0;
+    bool ack7210 = detect_i2c_ack(&h, WP4_ES7210_ADDR);
+    bool rd7210  = detect_i2c_rd(&h, WP4_ES7210_ADDR, DETECT_CHIPID1_REG, &c, 1) &&
+                   detect_i2c_rd(&h, WP4_ES7210_ADDR, DETECT_CHIPID2_REG, &d, 1);
+    detect_i2c_close(&h);
+    if (!(rd7210 && c == 0x72 && d == 0x10))
+        detect_miss("es7210 ack=%d read=%d id %02x %02x (es8311 id %02x %02x)",
+                    ack7210, rd7210, c, d, a, b);
+
+    if (!codec) {
+        detect_miss("no ES8311 on SDA%d/SCL%d — not a Waveshare P4 4.3",
+                    WP4_I2C_SDA, WP4_I2C_SCL);
+        return NULL;
+    }
+
+    detect_rail_drive(WP4_TP_RST_PIN, 0);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    gpio_set_level((gpio_num_t)WP4_TP_RST_PIN, 1);
+    vTaskDelay(pdMS_TO_TICKS(60));
+    if (!detect_gt911(WP4_I2C_SDA, WP4_I2C_SCL)) {
+        detect_rail_release(WP4_TP_RST_PIN);
+        detect_miss("ES8311 answered but no GT911 touch — not a Waveshare P4 4.3");
+        return NULL;
+    }
+
+    detect_found("hw_waveshare_p4_43");
+    return "hw-waveshare-p4-43";
+}
+#endif  // CONFIG_IDF_TARGET_ESP32P4
+
 // ── spangap state partition ─────────────────────────────────────────────────
 // Board-independent, and the one thing here the firmware never reports: where
 // the device keeps its own data. Read as it ACTUALLY exists on the chip, never
@@ -596,6 +658,9 @@ void app_main(void)
     // drives a power/reset GPIO that means something else on them.
     typedef const char *(*detect_fn)(void);
     static const detect_fn BOARDS[] = {
+#if CONFIG_IDF_TARGET_ESP32P4
+        detect_hw_waveshare_p4_43,
+#else
         detect_hw_nibble_zero,
         detect_hw_lilygo_t3s3_sx1262,
         detect_hw_xiao_esp32s3_sense,
@@ -606,6 +671,7 @@ void app_main(void)
         detect_hw_meshnology_w12,
         detect_hw_wismesh_tap_v2,
         detect_hw_lilygo_tdeck,
+#endif
     };
     const char *hw = NULL;
     for (size_t i = 0; i < sizeof(BOARDS) / sizeof(BOARDS[0]) && !hw; i++)
@@ -647,6 +713,14 @@ void app_main(void)
     // same reason.
     fflush(stdout);
     vTaskDelay(pdMS_TO_TICKS(50));                 // let the sentinel reach the wire
+#if CONFIG_IDF_TARGET_ESP32S3
     REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
     esp_restart();
+#else
+    // The P4 boards here reach the console through a USB-to-UART bridge whose
+    // DTR/RTS lines reset the chip into the loader, so flashmon needs no flag
+    // left behind — and clearForceDownloadBoot() knows only the S3's register.
+    // The detector waits to be reset.
+    for (;;) vTaskDelay(portMAX_DELAY);
+#endif
 }

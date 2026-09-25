@@ -1,0 +1,6 @@
+# The ESP32-P4 detector — layered by IDF after sdkconfig.defaults on this target.
+# Revision 3 is a different chip from revisions 0-1 as far as IDF is concerned:
+# an image runs on one family or the other, and a detector for the wrong one
+# dies on its first instruction. The P4 board here is pre-v3 silicon.
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_100=y

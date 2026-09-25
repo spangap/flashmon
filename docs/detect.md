@@ -207,7 +207,15 @@ Everything a probe learns on the way is logged at **debug** under the tag
 raises that tag to debug for its own run, so the whole trace is captured. The
 same lines appear on a real boot after `log tag detect debug`.
 
-All ten boards are **ESP32-S3**.
+Ten boards are **ESP32-S3** and one is an **ESP32-P4**. A detector is one
+chip's RAM image, so there is one per chip — `detect/spangap_detect.bin` for the
+S3 and `detect/spangap_detect_esp32p4.bin` for the P4 (`make TARGET=esp32p4`) —
+each holding only its own chip's boards, and flashmon uploads the one matching
+the chip the ROM reports. A chip with no detector is not probed; its board is
+named by its own firmware or by the person flashing it.
+
+The P4 detector does not end in the ROM loader: the P4 board's console is a
+USB-to-UART bridge whose DTR/RTS lines reset it, and it waits for that reset.
 
 ## Boards at a glance
 
@@ -218,6 +226,7 @@ All ten boards are **ESP32-S3**.
 | `meshnology-w12` | ESP32-S3 16MB/8MB-oct | LR2021 | SSD1315 128×64 OLED | Vext rail, GC1109 30 dBm PA + RFX2402E 2.4 GHz PA (radio-switched), L76K GNSS header, battery ADC, RGB LED |
 | `lilygo-tbeam-supreme` | ESP32-S3 8MB/8MB-quad | SX1262 (or LR1121/SX1278 on the same pins) | SH1106 128×64 OLED | AXP2101 PMU gating every rail, PCF8563 RTC on the PMU bus, L76K/u-blox GNSS, SD, IMU + magnetometer + BME280 (unwired), 18650 holder |
 | `wismesh-tap-v2` | ESP32-S3 16MB/8MB-oct | SX1262 (inside the RAK3112 module, private bus) | ST7789 320×240 TFT | FT5x06 touch, RAK12501 (L76K) GNSS, SD on the panel bus, Home button, buzzer, 2 LEDs, li-ion |
+| `waveshare-p4-43` | **ESP32-P4** 32MB/32MB-hex | none (Wi-Fi/BLE on an ESP32-C6 over SDIO) | ST7701 480×800 IPS, **2-lane MIPI-DSI** | GT911 touch (polled, reset GPIO23), ES8311 codec + ES7210 mics on SDA7/SCL8, SD on SDMMC slot 0, CH343P console, li-ion + charger |
 | `waveshare-28b` | ESP32-S3 16MB/8MB-oct | none (WiFi/BLE) | ST7701S 480×640 IPS, **16-bit RGB parallel** | GT911 touch, QMI8658 IMU, PCF85063 RTC, PCA9554 expander (both resets, both chip-selects), SD sharing the panel's config wires, buzzer, li-ion + charger |
 | `lilygo-t3s3` | ESP32-S3 4MB/2MB-quad | SX1262 (or SX1276/SX1280/LR1121) | SSD1306 OLED (unwired) | SD (own bus) |
 | `nibble-zero` | ESP32-S3 4MB/2MB-quad | SX1262 | SSD1306 OLED (unwired) | BME280 (unwired), NeoPixel, buttons |
@@ -237,6 +246,7 @@ must be powered first.
 | lilygo-tbeam-supreme (PMU bus) | 42 | 41 | — (the PMU is always powered) | 0x34 AXP2101, 0x51 PCF8563 |
 | lilygo-tbeam-supreme (peripheral bus) | 17 | 18 | AXP2101 **ALDO1/2/4 on** at 3.3 V | 0x3C/0x3D OLED, 0x76 BME280 |
 | wismesh-tap-v2 | 9 | 40 | drive **GPIO14 HIGH** (3V3 peripheral rail) | 0x38 FT5x06 touch |
+| waveshare-p4-43 | 7 | 8 | pulse **GPIO23** (GT911 reset) before asking for the touch controller | 0x18 ES8311, 0x40 ES7210, 0x5D/0x14 GT911 |
 | waveshare-28b | 15 | 7 | write the **PCA9554 at 0x20** (outputs high, then directions) to release the touch and panel resets it holds | 0x20 PCA9554, 0x5D/0x14 GT911, 0x6B QMI8658, 0x51 PCF85063 |
 | lilygo-t3s3 | 18 | 17 | — | 0x3C OLED |
 | nibble-zero | 8 | 7 | — | 0x3C OLED, 0x76 BME280 |
@@ -251,7 +261,8 @@ must be powered first.
 |---|---|---|---|
 | **GT911** capacitive touch | 0x5D or 0x14 | Product-ID at reg **0x8140** (16-bit reg addr) = ASCII `"911\0"` = `39 31 31 00`. Address is 0x5D if INT was low at power-on, else 0x14. | tdeck, waveshare-28b (whose reset is an expander line, so the expander is written first and the controller given ~60 ms to boot its own firmware) |
 | **T-Deck keyboard** (on-board ESP32-C3) | 0x55 | No ID register. ACK at 0x55; a 1-byte read returns the next queued ASCII key (`0` = none). Confirm with ACK + plausible ASCII. On the tdeck bus only. | tdeck |
-| **ES7210** quad mic ADC | 0x40 | Chip-ID regs **0xFD = 0x72**, **0xFE = 0x10** (→ 0x7210). | tdeck (audio build) |
+| **ES7210** quad mic ADC | 0x40 | Chip-ID regs **0xFD = 0x72**, **0xFE = 0x10** (→ 0x7210). | tdeck (audio build), waveshare-p4-43 |
+| **ES8311** audio codec | 0x18 | Chip-ID regs **0xFD = 0x83**, **0xFE = 0x11** (→ 0x8311). | waveshare-p4-43 |
 | **PCF8563** RTC | 0x51 | No ID register — identify by **ACK at 0x51**. Sanity: seconds reg 0x02 bit7 = VL (clock-integrity-lost) flag; reads should be valid BCD. | tbeam-supreme (on the PMU bus), tdeck (optional/add-on) |
 | **PCF85063** RTC | 0x51 | The same address and the same ACK-only identification as the PCF8563, and **the two are not distinguishable on the bus** — the board says which is soldered on, the probe only says something answered. The difference is where the time block starts (0x04 rather than 0x02), which is why naming the wrong one reads a plausible wrong time rather than failing. | waveshare-28b |
 | **PCA9554** IO expander | 0x20 | No ID register — identify by **ACK at 0x20**, which is also what licenses writing to it. That write has to happen before the rest of the bus is worth reading: the part powers up with every line an input, and on the 2.8B its lines hold the touch and panel resets. Output register (0x01) first, then direction (0x03), never the other way round. | waveshare-28b |
