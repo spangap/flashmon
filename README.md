@@ -151,6 +151,14 @@ confirm itself. See [`esp-idf/`](esp-idf) and [`docs/detect.md`](docs/detect.md)
 It also reports the device's **state partition**, which the firmware never states
 and which the flash-overlap warning below needs.
 
+A detector is one chip's RAM image, picked by the chip the probe reports
+(`detect/spangap_detect.bin` for the ESP32-S3, `spangap_detect_<chip>.bin` for
+another); a chip with none is probed but not detected. When a probed chip matches
+no board, the device window asks **This board is…**, listing the catalogue's
+boards. Naming one stands in for the detector's answer and offers that board's
+image. Nothing checks the choice: the firmware's own `detect_hw()` halts on the
+wrong board at its first boot.
+
 Once the board is known, whatever the catalogue holds for it is **offered in the
 device window**, and that window is the only place a flash is started from —
 there is no flash button parked at the top of the screen. The facts already on
@@ -158,11 +166,11 @@ it *are* the decision (which board, which image, which catalogue, the stamp it
 runs against the stamp on offer), so the offer is a green **Flash** under them
 rather than a second dialog restating them.
 
-An image that is **not** an upgrade is offered too, since a re-flash of what is
-already there — or a step back to an older build, or a switch to another
-catalogue — is a thing you do on a bench. It just says so: an amber warning names
-which of the two it is (same build, or older than what runs), and the button
-reads **Flash anyway**.
+The build the device already runs is **not** offered at all: writing the same
+image again is never the point of a visit. An **older** build is offered — a step
+back is a thing you do on a bench — behind an amber warning that says so, and the
+button reads **Flash anyway**. An image from another catalogue is always offered,
+since its stamp says nothing about the one the device runs.
 
 The window opens **once per published image**: when a connect settles, and again
 when a build lands while the page is open — that second one with whatever facts

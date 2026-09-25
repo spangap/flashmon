@@ -263,6 +263,8 @@
   #device-facts .lines{white-space:pre-wrap;font:12px/1.5 ui-monospace,SFMono-Regular,monospace}
   /* Why an offer in the device window is not an upgrade — shown only when it
    * isn't one, right above the button that would go ahead anyway. */
+  #device-pick{display:flex;gap:.6rem;align-items:center;margin:1rem 0 0;font-size:.9rem}
+  #device-pick[hidden]{display:none}
   #flash-warn{margin:1rem 0 0;padding:.55rem .7rem;font-size:.85rem;line-height:1.5;
        color:var(--fg);background:rgba(184,134,11,.15);border:1px solid #b8860b;border-radius:6px}
   #flash-warn[hidden]{display:none}
@@ -582,6 +584,13 @@
           <summary>View details</summary>
           <dl id="device-facts"></dl>
         </details>
+        <!-- A probed chip that no detector could name: the person holding it
+             says which board it is, and the catalogue's image for that board is
+             offered as if a detector had said so. -->
+        <div id="device-pick" hidden>
+          <label for="device-pick-board">This board is</label>
+          <select id="device-pick-board"></select>
+        </div>
         <p id="flash-warn" hidden></p>
         <div class="row">
           <button id="device-ok" class="btn-primary" type="button">OK</button>

@@ -30,8 +30,8 @@
 //
 // Once the board is known and the catalogue holds an image for it, the offer
 // appears in that same device window, under the facts it follows from: "Flash"
-// for an image newer than what runs, "Flash anyway" — behind a warning — for one
-// that is the same build or older, which is a re-flash you may still want. Going
+// for an image newer than what runs, "Flash anyway" — behind a warning — for an
+// older one, and nothing for the build it already runs. Going
 // ahead unzips that image in the browser and flashes every segment at its offset
 // over Web Serial (vendored esptool-js), then drops back into the monitor and
 // resets the device so its boot log streams live. With auto-flash on, a newer
@@ -538,6 +538,9 @@ async function romInfoNoReset(port) {
 const RTC_CNTL_OPTION1_REG = 0x6000812c;            // S3: DR_REG_RTCCNTL_BASE (0x60008000) + 0x12C
 const RTC_CNTL_FORCE_DOWNLOAD_BOOT = 0x1;           // bit 0 — same pair esptool uses
 async function clearForceDownloadBoot(loader) {
+  // The register is the S3's, and only the S3 detector sets the flag. On any
+  // other chip the same address is some other peripheral's, so it is not touched.
+  if (!loader.chip || loader.chip.CHIP_NAME !== 'ESP32-S3') return;
   try {
     await loader.writeReg(RTC_CNTL_OPTION1_REG, 0, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
   } catch (_) { /* not in the loader — then something already reset it, which clears it too */ }
@@ -630,17 +633,26 @@ function parseEspImage(bytes) {
 // capture that output over the serial port (it never streams to the terminal)
 // and return the peripheral + DETECTED: lines. The caller then resets the chip
 // back into its real firmware.
-async function runDetection(port) {
-  const res = await fetch('detect/spangap_detect.bin', { cache: 'no-store' });
-  if (!res.ok) throw new Error(`detector image missing (HTTP ${res.status})`);
-  const { entry, segments } = parseEspImage(new Uint8Array(await res.arrayBuffer()));
-  const total = segments.reduce((n, s) => n + s.data.length, 0);
-  let sent = 0;
+// A detector is a RAM image for one chip: on any other its segments land at
+// addresses that mean something else and the jump runs garbage. So the image is
+// chosen by the chip the ROM reports, and a chip with none is not probed.
+const DETECTORS = {
+  'ESP32-S3': 'detect/spangap_detect.bin',
+  'ESP32-P4': 'detect/spangap_detect_esp32p4.bin',
+};
 
+async function runDetection(port) {
   const transport = new Transport(port, false);
   try {
     const loader = new ESPLoader({ transport, baudrate: 460800, terminal: captureTerminal() });
     await loader.detectChip(romConnectMode());       // ROM loader (no stub)
+    const chip = loader.chip && loader.chip.CHIP_NAME;
+    const url = DETECTORS[chip];
+    const res = url ? await fetch(url, { cache: 'no-store' }) : null;
+    if (!res || !res.ok) return [`no detector for ${chip || 'this chip'}`];
+    const { entry, segments } = parseEspImage(new Uint8Array(await res.arrayBuffer()));
+    const total = segments.reduce((n, s) => n + s.data.length, 0);
+    let sent = 0;
     try { await loader.changeBaud(); } catch (_) { /* stay at ROM baud */ }
     for (const seg of segments) {
       const blocks = Math.ceil(seg.data.length / loader.ESP_RAM_BLOCK);
@@ -793,7 +805,8 @@ async function syncConsole(m) {
 }
 
 // Ask the console to say where it is. The firmware answers a bare CR with the
-// transport it is running on ("Spangap console on JTAG/serial." / "… USB/CDC 0."),
+// transport it is running on ("Spangap console on JTAG/serial." / "… USB/CDC 0." /
+// "… UART."),
 // which is the only thing that confirms the port just opened is the console and
 // not the device's second CDC port. Nothing is muted around it: a port that has
 // just come back may be mid-boot-log, and that is precisely what must survive.
@@ -3049,14 +3062,18 @@ async function hubConnect() {
 function hubAnnounce() {
   if (!hubSock) return;
   const m = monitor;
-  const held = m && !m.gone && pairedUnit;
+  const held = m && !m.gone;
   if (!held) {
     if (hubDesc !== null) { hubSend({ t: 'bye' }); hubDesc = null; }
     return;
   }
   const msg = {
     t: 'hello',
-    node: pairedUnit,
+    // A device that never gets as far as its greeting — firmware that reboots
+    // before it, or none that speaks spangap at all — is the one whose console
+    // matters most, so the port is announced under a placeholder until the
+    // greeting names it; the hub moves the node over when it does.
+    node: pairedUnit || 'unidentified',
     // The greeting carries the hostname, so this is answered the moment the
     // console is opened. Read off the session rather than off `hostNamed`,
     // which is the setup flow's own record of having asked for one.
@@ -5309,7 +5326,7 @@ async function flash(port, plan) {
     // Record the chip info (also shown in the flash log via the tee) so the same
     // detail block can be reprinted at the top of the monitor.
     const cap = captureTerminal(terminal);
-    const esploader = new ESPLoader({ transport, baudrate: 460800, terminal: cap });
+    const esploader = new ESPLoader({ transport, baudrate: flashBaud(port), terminal: cap });
     await gatherChipInfo(esploader, romConnectMode());
     const bannerLines = chipInfoLines(cap.lines);   // chip facts, no stub/baud noise
 
@@ -5355,8 +5372,19 @@ const USB_NAMES = [
   { vid: 0x303A, pid: 0x4002, name: 'ESP32-S3 CDC console' },
   { vid: 0x10C4, pid: 0xEA60, name: 'CP210x USB-UART bridge' },
   { vid: 0x1A86, pid: 0x55D4, name: 'CH9102 USB-UART bridge' },
+  { vid: 0x1A86, pid: 0x55D3, name: 'CH343 USB-UART bridge' },
   { vid: 0x1A86, pid: 0x7523, name: 'CH340 USB-UART bridge' },
 ];
+
+// The rate an image is written at: the loader starts at the ROM's own rate and
+// switches to this once its stub runs. On Espressif's native USB the number is
+// nominal. Behind a USB-to-UART bridge it is the wire, so a bridge gets twice
+// the rate.
+function flashBaud(port) {
+  let vid = null;
+  try { vid = (port.getInfo ? port.getInfo() : {}).usbVendorId; } catch (_) { /* unknown */ }
+  return vid !== undefined && vid !== null && vid !== 0x303A ? 921600 : 460800;
+}
 
 function usbDeviceName(port) {
   if (isFnb58Port(port)) return 'FNB58 power meter';
@@ -5469,16 +5497,59 @@ function factRow(dl, key, value) {
   dl.append(dt, dd);
 }
 
+// The board, from the person holding it, for a probed chip no detector could
+// name — a chip with no detector at all, or a board whose detector copy is not
+// in the image flashmon serves. Choosing one stands in for the detector's
+// answer: the monitor takes the name, and the catalogue's image for it is
+// offered the usual way. Nothing is checked — the firmware's own detect_hw()
+// is what refuses to run on the wrong board.
+function renderBoardPick(f) {
+  const pick = $('device-pick');
+  const sel = $('device-pick-board');
+  if (!pick || !sel) return;                  // page older than this script
+  pick.hidden = !(f.probed && (!f.hw || f.picked));
+  if (pick.hidden) return;
+  if (!sel.options.length) {
+    sel.add(new Option('— choose —', ''));
+    for (const b of BUILDS) if (b.name && b.name !== 'generic') sel.add(new Option(b.name, b.name));
+  }
+  sel.value = f.picked ? f.hw : '';           // a new device starts unchosen
+}
+
+on('device-pick-board', 'change', (e) => {
+  const hw = e.target.value;
+  if (!deviceFacts || !monitor) return;
+  if (!hw) {
+    // Back to "— choose —": the claim is withdrawn, and with it the offer.
+    if (!deviceFacts.picked) return;
+    deviceFacts.hw = null;
+    deviceFacts.picked = false;
+    monitor.hw = null;
+    pendingFlash = null;
+    renderDeviceBox();
+    return;
+  }
+  deviceFacts.hw = hw;
+  deviceFacts.picked = true;
+  monitor.hw = hw;
+  resolveFlashOffer();
+  renderDeviceBox();
+});
+
 function renderDeviceBox() {
   const f = deviceFacts;
   if (!f || !$('device-overlay')) return;     // no facts, or a page older than this script
   const board = f.hw ? f.hw.replace(/^hw-/, '') : null;
   $('device-title').textContent = board || 'Device found';
-  $('device-sub').textContent = !f.probed
-    ? `Identified as ${f.hw} from its own boot log — the chip has not been probed.`
-    : f.hw
-      ? `Identified as ${f.hw}. Everything read off the chip:`
-      : 'The chip answered the probe, but no supported board matched it.';
+  $('device-sub').textContent = f.picked
+    ? `You named this board ${f.hw} — nothing on the chip confirmed it.`
+    : !f.probed
+      ? `Identified as ${f.hw} from its own boot log — the chip has not been probed.`
+      : f.hw
+        ? `Identified as ${f.hw}. Everything read off the chip:`
+        : 'The chip answered the probe, but no supported board matched it. '
+          + 'If you know which board it is, say so below.';
+  renderBoardPick(f);
 
   const photo = $('device-photo');
   const src = f.hw ? deviceImage(f.hw) : null;
@@ -5671,6 +5742,9 @@ function armFlashGrace(hw, fromDetector) {
   const m = monitor;
   m.hw = hw;
   m.hwDetected = !!fromDetector && !!hw;
+  // The device (or a detector) has now said which board it is, so a board named
+  // by hand earlier no longer stands in — and no longer holds auto-flash back.
+  if (deviceFacts) deviceFacts.picked = false;
   m.deviceVersion = null;
   m.versionSettled = false;
   clearTimeout(m.versionTimer);
@@ -5711,6 +5785,11 @@ async function resolveFlashOffer() {
   for (const name of buildCandidates(m.hw)) {
     const url = findBuildUrl(name);
     if (!url) continue;
+    // The very build the device already runs is not an offer: re-writing the
+    // same image is never what anyone came here for, so it gets no button.
+    const stamp = VERSIONS[name] || '';
+    if (stamp && m.deviceVersion === stamp
+        && (!m.deviceCatalogue || m.deviceCatalogue === CATALOGUE)) return;
     const device = m.hw.replace(/^hw-/, '');
     const label = name === 'generic'
       ? `Flash ${PROJECT} (generic build)`
@@ -5733,6 +5812,9 @@ async function resolveFlashOffer() {
 let autoFlashed = null;
 function maybeAutoFlash() {
   if (!SETTINGS.autoFlash || !pendingFlash || !pendingFlash.newer || detecting) return;
+  // A board named by hand is a claim nothing has checked, so its image waits for
+  // the Flash button like any other deliberate choice.
+  if (deviceFacts && deviceFacts.picked) return;
   if (autoFlashed === pendingFlash.url) return;
   autoFlashed = pendingFlash.url;
   offerShownFor = pendingFlash.url;      // it is being flashed, not offered
@@ -5766,11 +5848,11 @@ function renderFlashOffer() {
   if (!f) return;
   // A device that reports no stamp is not being told this is an upgrade — there
   // is nothing to compare — so it gets the plain green button and no warning.
+  // An identical build is never offered (resolveFlashOffer), so an offer that is
+  // not newer is an older one.
   if (!f.newer) {
-    warn.textContent = f.stamp && m && m.deviceVersion && f.stamp < m.deviceVersion
-      ? 'The published image is OLDER than the firmware on the device. Flashing it takes '
-        + 'the device back to that build.'
-      : 'This is the build the device already runs. Flashing writes the same image again.';
+    warn.textContent = 'The published image is OLDER than the firmware on the device. '
+      + 'Flashing it takes the device back to that build.';
   }
   go.textContent = f.newer ? f.label : 'Flash anyway';
   go.className = f.newer ? 'btn-primary' : 'btn-warn';
