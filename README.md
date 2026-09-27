@@ -230,6 +230,13 @@ prefixes (so an unlisted `hw-foo-bar-baz` falls back to a listed `hw-foo-bar`
 image), and finally `generic`. If none is published there is nothing to offer —
 you still get the monitor.
 
+Only chip images are candidates. Each link in the listing carries `data-target`
+(`esp32s3`, `esp32p4`, or `linux` for a simulator's node package), and an entry in
+`builds.yaml` may declare `target: linux`; an image whose target is not a chip is
+left out of both the detected-board match and the manual board pick. The target
+is checked once more at the write: the chip the ROM loader reports has to be the
+one the image names, or the flash is refused before a byte is written.
+
 The catalogue is re-read while the page is open: every 15 s it fetches
 `timestamp` (one small request), and only when that value moves does it re-read
 `index.html` and re-evaluate the offer. So an image published from a build run

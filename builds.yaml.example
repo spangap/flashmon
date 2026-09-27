@@ -48,6 +48,15 @@
 #                           asked is a node nobody set up. It lands in the
 #                           generated index.html as data-onboarding on that
 #                           image's link.
+#               target      `linux`, only on an entry whose build is a Linux
+#                           process rather than a chip image (a simulator's
+#                           node package). flashmon never offers it.
+#               arch        with `target: linux`: `aarch64` or `x86_64`, the
+#                           only architecture that builds the entry.
+#
+# Every link in the generated index.html carries data-target, the chip the image
+# is for (`esp32s3`, `esp32p4`) or `linux`. flashmon offers only chip images, and
+# refuses to write one to a chip it was not built for.
 #
 # Nothing writes this file. What was built, and when, lives in the index.html
 # `spangap make-builds` leaves next to the images.

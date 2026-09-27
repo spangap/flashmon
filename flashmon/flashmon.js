@@ -128,6 +128,11 @@ let VERSIONS = {};
 // page must not. Filled by loadVersions alongside VERSIONS, since both come off
 // one pass over the same anchors.
 let ONBOARDING = {};
+// Build name -> what its image is for, off the listing's `data-target`: a chip
+// (`esp32s3`, `esp32p4`), checked against the chip the ROM loader reports before
+// a byte is written, or anything else (a `linux` node package for a simulator),
+// which is never offered and is not in VERSIONS at all.
+let TARGETS = {};
 // Set once a device-onboarding image has been written to the attached board:
 // from then on this session stays out of setup entirely, whatever the device's
 // boot log says it is missing — the device is asking for it on its screen.
@@ -5330,6 +5335,19 @@ async function flash(port, plan) {
     await gatherChipInfo(esploader, romConnectMode());
     const bannerLines = chipInfoLines(cap.lines);   // chip facts, no stub/baud noise
 
+    // An image for one chip written to another does not boot, and the write
+    // itself has already replaced what did. So a chip that is not the one the
+    // catalogue says the image is for is refused here, before anything is
+    // written — `untouched` tells the caller the device still holds its firmware.
+    const chip = chipTarget(esploader);
+    if (plan.target && chip && plan.target !== chip) {
+      await clearForceDownloadBoot(esploader);
+      const err = new Error(`this image is for ${plan.target}, and the attached chip is `
+                            + `${esploader.chip.CHIP_NAME} — nothing was written`);
+      err.untouched = true;
+      throw err;
+    }
+
     bar.style.display = 'block';
     barfill.style.width = '0';
     await esploader.writeFlash({
@@ -5511,7 +5529,9 @@ function renderBoardPick(f) {
   if (pick.hidden) return;
   if (!sel.options.length) {
     sel.add(new Option('— choose —', ''));
-    for (const b of BUILDS) if (b.name && b.name !== 'generic') sel.add(new Option(b.name, b.name));
+    for (const b of BUILDS) {
+      if (b.name && b.name !== 'generic' && isChipTarget(TARGETS[b.name])) sel.add(new Option(b.name, b.name));
+    }
   }
   sel.value = f.picked ? f.hw : '';           // a new device starts unchosen
 }
@@ -5945,6 +5965,7 @@ async function runPendingFlash() {
       return;
     }
     if (monitor !== m) return;                  // session replaced while downloading
+    plan.target = TARGETS[name] || '';          // the chip the write will insist on
     const hits = stateOverlaps(plan.fileArray, statePart);
     if (hits.length && !(await confirmStateOverlap(statePart, hits))) {
       if (monitor === m) note(m, '\x1b[33m-- flash cancelled; the device was not touched --\x1b[0m');
@@ -5979,6 +6000,17 @@ async function runPendingFlash() {
     } catch (e) {
       const msg = e && e.message ? e.message : String(e);
       log(`Error: ${msg}`, 'err');
+      if (e && e.untouched) {
+        // Refused before the write: the firmware on the device is intact, so it
+        // is started again rather than left sitting in the ROM loader.
+        let ok = true;
+        if (noResetLine) ok = await restartFromRom(port);
+        try {
+          await openMonitor(port, !noResetLine, [`Flash refused: ${msg}`,
+            ...(ok ? [] : ['Could not restart the device from here — press RESET to start the firmware.'])]);
+        } catch (_) { /* */ }
+        return;
+      }
       // Flashing may have left the port closed; drop back to a plain monitor so
       // the user can retry or reset manually.
       try { await openMonitor(port, false, [`Flash failed: ${msg}`]); } catch (_) { /* */ }
@@ -6296,7 +6328,7 @@ function parseConfig(text) {
     if (i < 0) return;
     const k = kv.slice(0, i).trim();
     const v = kv.slice(i + 1).trim().replace(/^["']|["']$/g, '');
-    if (k === 'name' || k === 'image') obj[k] = v;
+    if (k === 'name' || k === 'image' || k === 'target') obj[k] = v;
   };
   const top = (st, key) => st.slice(st.indexOf(':') + 1).trim().replace(/^["']|["']$/g, '');
   for (const raw of text.split('\n')) {
@@ -6308,7 +6340,24 @@ function parseConfig(text) {
     if (st.startsWith('- ')) { cur = {}; cfg.builds.push(cur); set(cur, st.slice(2).trim()); continue; }
     if (cur) set(cur, st);
   }
+  // An entry that builds for something other than a chip (`target: linux`) is
+  // not this page's to offer, so it is not in the catalogue as this page sees it:
+  // not a match for a detected board, and not in the manual board pick.
+  cfg.builds = cfg.builds.filter((b) => isChipTarget(b.target));
   return cfg;
+}
+
+// True for a target this page can write (an ESP32 chip) and for an unstated
+// one; false for anything else, such as a simulator's `linux` node package.
+function isChipTarget(target) {
+  return !target || /^esp32/i.test(target);
+}
+
+// The chip esptool-js identified, spelled as a catalogue target: `ESP32-S3`
+// is `esp32s3`.
+function chipTarget(loader) {
+  const name = loader && loader.chip && loader.chip.CHIP_NAME;
+  return name ? name.toLowerCase().replace(/[^a-z0-9]/g, '') : '';
 }
 
 // The selected catalogue's config. Missing or broken falls back to defaults —
@@ -6340,6 +6389,7 @@ async function loadVersions() {
   // per-image facts as attributes on the same element (`data-onboarding`), and
   // reading the tag whole is what keeps a fact attached to the image it is about.
   ONBOARDING = {};
+  TARGETS = {};
   for (const tag of text.matchAll(/<a\b([^>]*)>/gi)) {
     const attrs = tag[1];
     const href = /href\s*=\s*["']([^"']+\.zip)["']/i.exec(attrs);
@@ -6348,6 +6398,11 @@ async function loadVersions() {
     const parts = /^(.+?)_(.+)_(\d{8,14})$/.exec(base);
     if (!parts) continue;
     const [, , name, stamp] = parts;
+    // A non-chip image (`data-target="linux"`) is not an image this page can
+    // write, so it is not one it knows about.
+    const tgt = /data-target\s*=\s*["']([^"']+)["']/i.exec(attrs);
+    TARGETS[name] = tgt ? tgt[1].toLowerCase() : '';
+    if (!isChipTarget(TARGETS[name])) continue;
     if (out[name] && stamp <= out[name]) continue;
     out[name] = stamp;
     const onb = /data-onboarding\s*=\s*["']([^"']+)["']/i.exec(attrs);
