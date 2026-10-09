@@ -106,7 +106,8 @@ build-fixed — so the anchor settles those instead.) Second, the **anchor**: on
 mandatory peripheral on that board's pins, confirmed by the radio. Where the
 radio splits a board line it is also what names the straddle, so
 `hw-lilygo-t3s3-sx1262` answers for an SX1262 and stays silent for an LR1121 on
-the same PCB — which is exactly the mismatch the firmware check exists to catch.
+the same PCB, which `hw-lilygo-t3s3-lr1121` answers for instead — exactly the
+mismatch the firmware check exists to catch.
 
 The model to copy for a real *identification* is the **T-Deck GPS**: the Plus
 ships one of two GNSS receivers with nothing host-visible to tell them apart, so
@@ -228,7 +229,7 @@ USB-to-UART bridge whose DTR/RTS lines reset it, and it waits for that reset.
 | `wismesh-tap-v2` | ESP32-S3 16MB/8MB-oct | SX1262 (inside the RAK3112 module, private bus) | ST7789 320×240 TFT | FT5x06 touch, RAK12501 (L76K) GNSS, SD on the panel bus, Home button, buzzer, 2 LEDs, li-ion |
 | `waveshare-p4-43` | **ESP32-P4** 32MB/32MB-hex | none (Wi-Fi/BLE on an ESP32-C6 over SDIO) | ST7701 480×800 IPS, **2-lane MIPI-DSI** | GT911 touch (polled, reset GPIO23), ES8311 codec + ES7210 mics on SDA7/SCL8, SD on SDMMC slot 0, CH343P console, li-ion + charger |
 | `waveshare-28b` | ESP32-S3 16MB/8MB-oct | none (WiFi/BLE) | ST7701S 480×640 IPS, **16-bit RGB parallel** | GT911 touch, QMI8658 IMU, PCF85063 RTC, PCA9554 expander (both resets, both chip-selects), SD sharing the panel's config wires, buzzer, li-ion + charger |
-| `lilygo-t3s3` | ESP32-S3 4MB/2MB-quad | SX1262 (or SX1276/SX1280/LR1121) | SSD1306 OLED (unwired) | SD (own bus) |
+| `lilygo-t3s3` | ESP32-S3 4MB/2MB-quad | SX1262 (`-sx1262`) or LR1121 (`-lr1121`); SX1276/SX1280 variants have no straddle | SSD1306 OLED (unwired) | SD (own bus) |
 | `nibble-zero` | ESP32-S3 4MB/2MB-quad | SX1262 | SSD1306 OLED (unwired) | BME280 (unwired), NeoPixel, buttons |
 | `xiao-esp32s3-sense` | ESP32-S3 8MB/8MB-oct | none (WiFi/BLE) | none | Camera (OV2640/OV5640/… on B2B), PDM mic, SD (SDMMC 1-bit). Sense board does **not** fit the 16 MB Plus. |
 | `xiao-esp32s3-sx1262` | ESP32-S3 **8 or 16MB**/8MB-oct | SX1262 | none | XIAO ESP32-S3 (8 MB) **or ESP32-S3 Plus (16 MB)** + Wio-SX1262 on B2B; both fit. |
@@ -284,7 +285,7 @@ host at the candidate pins. Order the checks register-first, command-last.
 | **SX127x** (SX1276/78) | Register read: **RegVersion 0x42** → **0x12** (SX1276/77/78/79) or **0x22** (SX1272/73). Address byte has bit7=0 for read. No BUSY line. | Cheapest, most specific — try first. |
 | **SX126x** (SX1262/68) | No version register. Reset, wait BUSY low, then **WriteRegister (0x0D)** a scratch value to the LoRa sync-word reg **0x0740** and **ReadRegister (0x1D)** it back (read has 1 NOP/status byte before data). Matching read-back = SX126x present. `GetStatus (0xC0)` must also return a non-0x00/0xFF byte. | The radio on tdeck, heltec, t3s3, nibble, xiao, tbeam-supreme and tap-v2. SX1261/62/68 are not distinguishable in software. The **W12** shares heltec's flash size, OLED pins and LoRa header, so both boards' probes name their modem — loosening either back to "any radio answers" makes both identify as whichever runs first. |
 | **SX128x** (SX1280, 2.4 GHz) | Command/BUSY like SX126x, but has a readable **firmware-version register at 0x0153/0x0154**. | t3s3 variant. |
-| **LR1121** (LR11xx) | **GetVersion** command (`0x01 0x01`); reply `[HW, device, FWmaj, FWmin]` with **device = 0xDF** (0xDA = LR1110, 0xDB = LR1120). | t3s3 variant. |
+| **LR1121** (LR11xx) | **GetVersion** command (`0x01 0x01`); reply `[stat, HW, device, FWmaj, FWmin]` with **device = 0x03** (0x01 = LR1110, 0x02 = LR1120; 0xDF is the bootloader, not a running part). An LR2021 puts its firmware major where the device byte sits (0x01 on the W12), so the FWmaj byte must also read as a single digit — the W12's is its 0x18 minor. | lilygo-t3s3-lr1121 |
 | **LR2021** | Same **GetVersion** opcode as the LR11xx, and told apart by the reply's shape: the LR11xx prefixes it with **one** status byte and names itself in a device byte, the LR2021 with **two** and offers only a firmware version. So there is no device id to match — it is checked **last**, after every part that can identify itself has had its turn, and what is required is the status field both families share (bits 3:1 of the first byte) reading as processed. **Two** of its four codes mean that: `2` is "ok" and `3` is "ok, data is being transmitted", and a command that returns something — as GetVersion does — reports the latter, so both are accepted. A W12 answers `07 21 01 18`: status `3`, then firmware 1.24. `0xFF` is rejected as well as `0x00`, since a floating MISO reads as code `3` and would claim to be a radio. | w12 |
 
 Radio SPI pins by board:
@@ -296,7 +297,7 @@ Radio SPI pins by board:
 | meshnology-w12 | 9 | 10 | 11 | 8 | 12 | 13 | 14 (chip DIO8) |
 | lilygo-tbeam-supreme | 12 | 11 | 13 | 10 | 5 | 4 | 1 |
 | wismesh-tap-v2 | 5 | 6 | 3 | 7 | 8 | 48 | 47 |
-| lilygo-t3s3 | 5 | 6 | 3 | 7 | 8 | 34 | 33 |
+| lilygo-t3s3 | 5 | 6 | 3 | 7 | 8 | 34 | 33 (LR1121: 36, chip DIO9) |
 | nibble-zero | 13 | 11 | 12 | 10 | 6 | 5 | 4 |
 | xiao-esp32s3-sx1262 | 7 | 9 | 8 | 41 | 42 | 40 | 39 |
 

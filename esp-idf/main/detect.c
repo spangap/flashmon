@@ -114,6 +114,26 @@ static const char *detect_hw_lilygo_t3s3_sx1262(void)
     return "hw-lilygo-t3s3-sx1262";
 }
 
+// hw-lilygo-t3s3-lr1121 — passive. Same PCB and header as the SX1262 T3-S3
+// above; only the radio tells them apart.
+static const char *detect_hw_lilygo_t3s3_lr1121(void)
+{
+    if (!detect_flash_mb(4)) return NULL;
+
+    if (!detect_ack2(T3_OLED_SDA, T3_OLED_SCL, 0x3C, 0x3D)) {
+        detect_dbg("no OLED on 18/17 — not a T3-S3");
+        return NULL;
+    }
+    if (!detect_radio_is(T3_LORA_SCK, T3_LORA_MOSI, T3_LORA_MISO,
+                         T3_LORA_CS, T3_LORA_RST, T3_LORA_BUSY, "lr1121")) {
+        detect_dbg("T3-S3 pins, but the radio is not an LR1121");
+        return NULL;
+    }
+
+    detect_found("hw_lilygo_t3s3_lr1121");
+    return "hw-lilygo-t3s3-lr1121";
+}
+
 // hw-xiao-esp32s3-sense — passive. The camera in the DVP socket is the anchor.
 #define XS_CAM_SIOD   40
 #define XS_CAM_SIOC   39
@@ -663,6 +683,7 @@ void app_main(void)
 #else
         detect_hw_nibble_zero,
         detect_hw_lilygo_t3s3_sx1262,
+        detect_hw_lilygo_t3s3_lr1121,
         detect_hw_xiao_esp32s3_sense,
         detect_hw_xiao_esp32s3_sx1262,
         detect_hw_waveshare_28b,
