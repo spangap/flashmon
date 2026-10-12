@@ -1,4 +1,4 @@
-# Copy this to <workspace>/builds/<catalogue>/builds.yaml and make it yours.
+# Copy this to <workspace>/<project>-builds/<catalogue>/builds.yaml and make it yours.
 # `spangap make-builds`, run in that directory, builds every entry here and
 # writes index.html + timestamp beside them; the flashmon page serves the
 # directory as `../builds/<catalogue>/` and reads both.
@@ -28,7 +28,9 @@
 #                           after the hw-<straddle> the detector reports so the
 #                           browser can match a detected board to its image;
 #                           `generic` is the fallback for any board without a
-#                           dedicated image.
+#                           dedicated image, and generic-<chip>-opsram /
+#                           generic-<chip>-oflash-opsram its octal-PSRAM and
+#                           octal-flash variants, picked by the chip probe.
 #               invocation  the `spangap build` arguments that produce it.
 #               image       optional. A photo of the board, shown in the device
 #                           box when a detection run identifies it: a path in the
@@ -73,3 +75,7 @@ builds:
     invocation: myorg/myproject --with spangap/hw-lilygo-tdeck
   - name: generic
     invocation: myorg/myproject
+  - name: generic-esp32s3-opsram
+    invocation: myorg/myproject --kconfig CONFIG_SPIRAM_MODE_OCT=y
+  - name: generic-esp32s3-oflash-opsram
+    invocation: myorg/myproject --kconfig CONFIG_ESPTOOLPY_OCT_FLASH=y --kconfig CONFIG_SPIRAM_MODE_OCT=y

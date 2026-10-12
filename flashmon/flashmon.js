@@ -453,13 +453,31 @@ function captureTerminal(tee) {
 async function gatherChipInfo(loader, mode = 'default_reset') {
   await loader.main(mode);
   try { await loader.detectFlashSize(); } catch (_) { /* leave flash size out */ }
+  const ft = await flashTypeLine(loader);
+  if (ft) loader.terminal.writeLine(ft);
+}
+
+// Whether the chip's flash is octal, as a chip-fact line. esptool-js does not
+// say, and the generic image has to match it: an image built for quad flash
+// does not boot from octal. The ESP32-S3 records it in the eFuse bit its own
+// ROM boots by (FLASH_TYPE); no other chip here has the question.
+const EFUSE_RD_REPEAT_DATA3_REG = 0x6000703c;
+const EFUSE_FLASH_TYPE = 1 << 9;
+async function flashTypeLine(loader) {
+  if (!loader.chip || loader.chip.CHIP_NAME !== 'ESP32-S3') return null;
+  try {
+    const v = await loader.readReg(EFUSE_RD_REPEAT_DATA3_REG);
+    return `Flash type: ${v & EFUSE_FLASH_TYPE ? 'octal' : 'quad'}`;
+  } catch (_) {
+    return null;
+  }
 }
 
 // Keep only the chip-fact lines from esptool-js's captured output, dropping its
 // procedural chatter (banner, port info, stub upload, baudrate switch, hints).
 const INFO_PREFIXES = [
   'Chip Revision:', 'Chip is ', 'Features:', 'Crystal is ', 'MAC:',
-  'Flash ID:', 'Auto-detected Flash size:',
+  'Flash ID:', 'Auto-detected Flash size:', 'Flash type:',
 ];
 function chipInfoLines(lines) {
   return lines.filter((l) => INFO_PREFIXES.some((p) => l.startsWith(p)));
@@ -520,6 +538,9 @@ async function romInfoNoReset(port) {
     await loader.detectChip('no_reset');            // syncs and identifies; no stub
     cap.writeLine(`Chip is ${await loader.chip.getChipDescription(loader)}`);
     try { cap.writeLine(`MAC: ${await loader.chip.readMac(loader)}`); } catch (_) { /* skip */ }
+    try { cap.writeLine(`Features: ${(await loader.chip.getChipFeatures(loader)).join(', ')}`); } catch (_) { /* skip */ }
+    const ft = await flashTypeLine(loader);
+    if (ft) cap.writeLine(ft);
     return chipInfoLines(cap.lines);
   } catch (_) {
     return null;                                    // not in the loader (or not an ESP)
@@ -5530,7 +5551,7 @@ function renderBoardPick(f) {
   if (!sel.options.length) {
     sel.add(new Option('— choose —', ''));
     for (const b of BUILDS) {
-      if (b.name && b.name !== 'generic' && isChipTarget(TARGETS[b.name])) sel.add(new Option(b.name, b.name));
+      if (b.name && !isGeneric(b.name) && isChipTarget(TARGETS[b.name])) sel.add(new Option(b.name, b.name));
     }
   }
   sel.value = f.picked ? f.hw : '';           // a new device starts unchosen
@@ -5711,9 +5732,10 @@ function cancelStateWarn() { if (stateWarnClose) stateWarnClose(false); }
 // ── build catalogue ─────────────────────────────────────────────────────────
 // Image names to try for a detected board, most-specific first: the exact name,
 // then successively shorter hw- prefixes (so an unlisted hw-foo-bar-baz falls to
-// a listed hw-foo-bar image), then `generic`. Only names present in the catalogue
-// are returned.
-function buildCandidates(hw) {
+// a listed hw-foo-bar image), then the generic image the probed chip needs. Only
+// names present in the catalogue are returned, and a generic image only for the
+// chip it was built for.
+function buildCandidates(hw, chip) {
   const names = new Set(BUILD_NAMES);
   const out = [];
   let n = hw;
@@ -5723,8 +5745,31 @@ function buildCandidates(hw) {
     if (i <= 2) break;                  // 'hw-' — don't strip the prefix itself
     n = n.slice(0, i);
   }
-  if (names.has('generic')) out.push('generic');
+  const g = genericFor(chip);
+  if (g && names.has(g.name) && (!TARGETS[g.name] || !g.target || TARGETS[g.name] === g.target)) {
+    out.push(g.name);
+  }
   return out;
+}
+
+function isGeneric(name) { return /^generic(-|$)/.test(name); }
+
+// The generic image a probed chip needs, from its chip-fact lines: the flash and
+// PSRAM modes are fixed at build time, so there is one generic image per
+// combination. Embedded PSRAM of 8 MB or more is octal (R8, R8V, R16V); 2 MB,
+// or PSRAM the eFuses know nothing about, is quad — plain `generic`. No probe,
+// no facts: plain `generic`, for any chip.
+function genericFor(chip) {
+  const lines = chip || [];
+  const desc = lines.find((l) => l.startsWith('Chip is '));
+  if (!desc) return { name: 'generic', target: '' };
+  const target = desc.slice(8).split(/[\s(]/)[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+  const feat = lines.find((l) => l.startsWith('Features:')) || '';
+  const psram = /Embedded PSRAM (\d+)MB/.exec(feat);
+  const opsram = psram ? Number(psram[1]) >= 8 : /Unknown Embedded PSRAM/.test(feat);
+  const oflash = lines.includes('Flash type: octal');
+  const mode = (oflash ? '-oflash' : '') + (opsram ? '-opsram' : '');
+  return { name: mode ? `generic-${target}${mode}` : 'generic', target };
 }
 
 function projectSlug(project) {
@@ -5802,7 +5847,7 @@ async function resolveFlashOffer() {
   // Hold off until the device's stamp has had a chance to arrive, so a current
   // device isn't offered a pointless re-flash on the way to knowing better.
   if (!m.versionSettled && m.deviceVersion === null) return;
-  for (const name of buildCandidates(m.hw)) {
+  for (const name of buildCandidates(m.hw, m.chipInfo)) {
     const url = findBuildUrl(name);
     if (!url) continue;
     // The very build the device already runs is not an offer: re-writing the
@@ -5811,7 +5856,7 @@ async function resolveFlashOffer() {
     if (stamp && m.deviceVersion === stamp
         && (!m.deviceCatalogue || m.deviceCatalogue === CATALOGUE)) return;
     const device = m.hw.replace(/^hw-/, '');
-    const label = name === 'generic'
+    const label = isGeneric(name)
       ? `Flash ${PROJECT} (generic build)`
       : `Flash ${PROJECT} to ${device}`;
     pendingFlash = { url, name, label, stamp: VERSIONS[name] || '', newer: catalogueNewer(name, m) };
@@ -6125,6 +6170,7 @@ async function runDetect() {
   // Hardware button back) and resolve what the catalogue has for it. The offer
   // lands in the same window as the findings below — it arrives a few seconds
   // later, with the device's build stamp, and the window repaints around it.
+  if (monitor) monitor.chipInfo = info;
   armFlashGrace(hw, true);
   // Only a run that reached the chip has anything to show.
   if (facts && monitor) showDeviceBox(facts);

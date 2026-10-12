@@ -43,7 +43,9 @@ deployment and under `spangap dev` alike, so there is no base URL to configure.
       index.html                ← the images that exist, and at which stamp
       timestamp                 ← the newest stamp here; polled by the page
       <slug>_<board>_<stamp>.zip
-      <slug>_generic_<stamp>.zip  ← fallback for a board without its own image
+      <slug>_generic[-<chip>-<mode>]_<stamp>.zip
+                                ← fallback for a board without its own image,
+                                  one per flash/PSRAM mode
 ```
 
 Serve **`flashmon/flashmon/`** and **`builds/`** as siblings from anywhere static
@@ -53,7 +55,9 @@ over HTTPS (or `http://localhost`) — a phone on the LAN has no localhost
 exemption, so testing from one means real HTTPS.
 
 In a spangap workspace, `spangap flashmon` serves both out of the build container at
-those same two paths — the one local address flashmon is reached at, which is
+those same two paths — `/builds` being the workspace's `<project>-builds/` for the
+project being built (named by its straddle's `project:`, e.g.
+`reticulous-builds/`) — the one local address flashmon is reached at, which is
 also what lets a page lend that container its console (below).
 
 `<host>/flashmon` works with or without the trailing slash. Without it the
@@ -61,9 +65,8 @@ document's base is the parent directory, which would send every relative URL in
 the page one level too high; most servers redirect a directory URL onto its slash
 and settle it, and the page pins its own base for the servers that don't.
 
-Deploying is copying both directories to the server (e.g. `rsync` them) — so the
-**untracked** `builds/` tree rides along and gets served even though it is not
-tracked. Run `spangap make-builds` (below) before deploying so it is present.
+Deploying is copying both directories to the server (e.g. `rsync` them), the
+workspace's **untracked** `<project>-builds/` tree landing as `builds/`. Run `spangap make-builds` (below) before deploying so it is present.
 
 Under `spangap dev` neither is copied anywhere: the dev server mounts both
 straight out of the workspace, at the same two paths.
@@ -198,7 +201,7 @@ outranking the one before it:
 
 1. **`stable`**, when nothing else has anything to say — or **`local`** when the
    page is served from `localhost` over plain http, where it is being served by a
-   build container on this machine and `builds/local` is the catalogue that
+   build container on this machine and `<project>-builds/local` is the catalogue that
    container builds into. A local page is **pinned** there, so the device below
    does not move it: with auto-flash on (which a local tab also starts with) a
    board that reported some other catalogue would otherwise be flashed from a
@@ -227,8 +230,32 @@ The board is named `hw-<straddle>` (e.g. `hw-lilygo-tdeck`) whichever way it was
 identified. The catalogue's `index.html` says which images exist and at which
 stamp, so the page looks up `hw-<straddle>` there, trying successively shorter
 prefixes (so an unlisted `hw-foo-bar-baz` falls back to a listed `hw-foo-bar`
-image), and finally `generic`. If none is published there is nothing to offer —
-you still get the monitor.
+image), and finally the generic image that fits the chip. If none is published
+there is nothing to offer — you still get the monitor.
+
+**Which generic image.** A generic image names no board, but the build still
+fixes what a running chip cannot change: the flash mode and the PSRAM mode. So
+there is one generic image per combination, and the ROM probe that starts a
+detection run says which one the chip needs:
+
+- **octal PSRAM** — the Features line esptool-js reads from the eFuses: embedded
+  PSRAM of 8 MB or more (the R8, R8V and R16V parts) is octal, 2 MB is quad;
+- **octal flash** — the ESP32-S3 eFuse bit the ROM itself boots by
+  (`EFUSE_RD_REPEAT_DATA3_REG` bit 9, *FLASH_TYPE*), read in the same probe and
+  shown with the chip facts as `Flash type: octal` or `quad`.
+
+That names `generic-<chip>-opsram` (quad flash, octal PSRAM),
+`generic-<chip>-oflash-opsram` (both octal), or plain `generic` (quad flash with
+quad PSRAM, or a separate PSRAM chip the eFuses know nothing about). Only that
+image is offered, and only when its `data-target` is the probed chip: a quad
+image on an octal-flash chip does not boot at all, so a missing variant offers
+nothing rather than the wrong one. A board named without a probe — by its own
+boot log — has no chip facts, and is offered plain `generic`.
+
+A board no detector could name gets no generic offer at all — only the manual
+board pick, which leaves the generic images out. A generic image runs on
+anything, so offering one there would let auto-flash write it over firmware the
+page knows nothing about.
 
 Only chip images are candidates. Each link in the listing carries `data-target`
 (`esp32s3`, `esp32p4`, or `linux` for a simulator's node package), and an entry in
@@ -338,7 +365,7 @@ container publishes the hub to the host loopback only.
 **Flashing is not part of it.** The hub never asks for a flash; auto-flash
 already covers it, since the catalogue the page is polling is the one the
 container builds into — a locally served tab starts on `local` and with
-auto-flash on for exactly that reason, so a build run in `builds/local` reaches
+auto-flash on for exactly that reason, so a build run in `<project>-builds/local` reaches
 every attached board with nothing asked of either side.
 
 ### On a touch screen
@@ -580,16 +607,16 @@ there instead — see
 [spangap-core's usb-console](../spangap-core/docs/usb-console.md). Once a session
 is open, the hostname in the monitor's title bar is what identifies the board.
 
-## Configuration — `builds/<catalogue>/builds.yaml`
+## Configuration — `<project>-builds/<catalogue>/builds.yaml`
 
 flashmon is a **generic installer**: it ships no committed config, so anyone can
 run it and brand it as their own. Its config lives with the images it describes,
-in the untracked `builds/` tree beside this repo — so your config and your
-catalogue travel together, and neither lands upstream:
+in the untracked `<project>-builds/` tree beside this repo (served as `builds/`)
+— so your config and your catalogue travel together, and neither lands upstream:
 
 ```sh
-mkdir -p ../builds/stable
-cp builds.yaml.example ../builds/stable/builds.yaml   # then edit it
+mkdir -p ../myproject-builds/stable
+cp builds.yaml.example ../myproject-builds/stable/builds.yaml   # then edit it
 ```
 
 `stable` is the catalogue a deployed page starts on (a locally served one starts
@@ -613,6 +640,8 @@ builds:
     invocation: reticulous/reticulous --with spangap/hw-lilygo-tdeck
   - name: generic                # fallback for any board without its own image
     invocation: reticulous/reticulous
+  - name: generic-esp32s3-opsram # the same, for a chip with octal PSRAM
+    invocation: reticulous/reticulous --kconfig CONFIG_SPIRAM_MODE_OCT=y
 ```
 
 Each entry names an image and gives the `spangap build` invocation that produces
@@ -647,9 +676,9 @@ exists.
 From inside the spangap workspace this repo is checked out in:
 
 ```sh
-cd ../builds/stable && spangap make-builds                  # every image in this catalogue
-cd ../builds/stable && spangap make-builds hw-lilygo-tdeck  # rebuild just this one
-cd ../builds && spangap make-builds                         # every catalogue in the tree
+cd ../myproject-builds/stable && spangap make-builds                  # every image in this catalogue
+cd ../myproject-builds/stable && spangap make-builds hw-lilygo-tdeck  # rebuild just this one
+cd ../myproject-builds && spangap make-builds                         # every catalogue in the tree
 ```
 
 It builds each entry in the spangap container via `spangap build` (no local

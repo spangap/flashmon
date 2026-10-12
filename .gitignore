@@ -1,8 +1,8 @@
 # flashmon is a generic installer (it lives in spangap's account); a deployment
 # brands it and lists its images by supplying its OWN builds.yaml, which lives
-# in the untracked builds/ tree beside the workspace's straddles and is never
-# committed here. Any config yaml that turns up in this repo is ignored — copy
-# builds.yaml.example into <workspace>/builds/<catalogue>/builds.yaml and edit
+# in the project's <project>-builds/ tree beside the workspace's straddles and is
+# never committed here. Any config yaml that turns up in this repo is ignored —
+# copy builds.yaml.example into <workspace>/<project>-builds/<catalogue>/builds.yaml and edit
 # it there. (The CI workflow is .yml, so it stays tracked.)
 *.yaml
 
