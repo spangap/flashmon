@@ -788,7 +788,7 @@ the terminal's, because half of what it is for is telling a session that has
 stopped receiving from one that is receiving and not showing:
 
 ```
-usb in 4096B/64 (0.3s ago, 8 posted) out 12B/3 err 0 · loop 4096B/64 (0.3s ago, behind 0.0s) · keys 2/2 · term 53x40 box 372x480 · view 0/0 · hw hw-heltecv4
+usb in 4096B/64 (0.3s ago, 8 posted) out 12B/3 err 0 · loop 4096B/64 (0.3s ago, behind 0.0s) · keys 2/2 · term 53x40 box 372x480 · view 0/0 · hw hw-heltecv4-r2
 session live drops 0
 first read: A transfer error has occurred.
 ```

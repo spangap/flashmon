@@ -31,7 +31,7 @@ It is written once, there, and read by two callers:
 - **flashmon's detector** ([`../esp-idf/`](../esp-idf)), which carries a **copy**
   of each board's `detect_hw()` renamed
   `detect_hw_<straddle_with_underscores>` — `detect_hw_lilygo_tdeck`,
-  `detect_hw_heltecv4`, … — and calls them in turn from RAM, stopping at the
+  `detect_hw_heltecv4_r2`, … — and calls them in turn from RAM, stopping at the
   first that answers.
 
 The copy is manual and deliberately so: it is a handful of self-contained
@@ -100,9 +100,13 @@ of the firmware that ran it.
 Two things shape a probe. First, the **physical flash size** (SFDP), which rules
 a board out before a single pin is touched — 16 MB -> tdeck/heltec/w12/tap-v2,
 8 MB -> xiao-sense/tbeam-supreme, 4 MB -> t3s3/nibble; the xiao-sx1262 accepts **8 or 16 MB**, since
-the Wio-SX1262 fits both the base XIAO and the Plus. (PSRAM size would split the
-16 MB pair, but a RAM-loaded detector cannot init PSRAM — octal vs quad is
-build-fixed — so the anchor settles those instead.) Second, the **anchor**: one
+the Wio-SX1262 fits both the base XIAO and the Plus. Where two boards share a
+PCB and differ by module, the **embedded PSRAM size** the eFuses record splits
+them, just as passively — a RAM-loaded detector cannot init PSRAM (octal vs
+quad is build-fixed), but it can read what was fused. The Heltec V4 is the case:
+2 MB -> `heltecv4-r2`, 8 MB -> `heltecv4-r8`, asked before either drives its
+Vext gate, because the R2's (GPIO36) is an octal-PSRAM line on the R8.
+Second, the **anchor**: one
 mandatory peripheral on that board's pins, confirmed by the radio. Where the
 radio splits a board line it is also what names the straddle, so
 `hw-lilygo-t3s3-sx1262` answers for an SX1262 and stays silent for an LR1121 on
@@ -164,7 +168,8 @@ it is not, and the page says so rather than appearing to hang.
 
 **The fragile boards come first.** A board identifiable by passive bus reads
 alone (nibble, t3s3, xiao-sense, xiao-sx1262) is settled before any probe that
-DRIVES a power-enable or reset GPIO (heltec Vext GPIO36 and W12 Vext GPIO45,
+DRIVES a power-enable or reset GPIO (heltec Vext GPIO36 on the R2 or GPIO40 on
+the R8, and W12 Vext GPIO45,
 both plus reset GPIO21, then the TAP V2's GPIO14 + GPIO4, then tdeck rail
 GPIO10) — because that pin means
 something else entirely on the board it is not looking at. Since the run stops at the first hit, a passively-read
@@ -223,7 +228,8 @@ USB-to-UART bridge whose DTR/RTS lines reset it, and it waits for that reset.
 | Board (`hw-*`) | SoC | Radio | Display | Notable extras |
 |---|---|---|---|---|
 | `tdeck` | ESP32-S3 16MB/8MB-oct | SX1262 | ST7789 320×240 TFT | GT911 touch, I²C keyboard, trackball, GPS, ES7210+MAX98357A audio, SD, optional PCF8563 |
-| `heltecv4` | ESP32-S3 16MB/2MB-quad | SX1262 | SSD1306 128×64 OLED (unwired) | Vext rail, battery ADC |
+| `heltecv4-r2` | ESP32-S3 16MB/2MB-quad | SX1262 | SSD1306 128×64 OLED | Vext rail, GC1109 or KCT8103L 27 dBm FEM, battery ADC |
+| `heltecv4-r8` | ESP32-S3 16MB/8MB-oct | SX1262 | SSD1306-class 128×64 OLED | Vext rail (also the FEM boost supply), KCT8103L 27 dBm FEM, TX LED, battery ADC |
 | `meshnology-w12` | ESP32-S3 16MB/8MB-oct | LR2021 | SSD1315 128×64 OLED | Vext rail, GC1109 30 dBm PA + RFX2402E 2.4 GHz PA (radio-switched), L76K GNSS header, battery ADC, RGB LED |
 | `lilygo-tbeam-supreme` | ESP32-S3 8MB/8MB-quad | SX1262 (or LR1121/SX1278 on the same pins) | SH1106 128×64 OLED | AXP2101 PMU gating every rail, PCF8563 RTC on the PMU bus, L76K/u-blox GNSS, SD, IMU + magnetometer + BME280 (unwired), 18650 holder |
 | `wismesh-tap-v2` | ESP32-S3 16MB/8MB-oct | SX1262 (inside the RAK3112 module, private bus) | ST7789 320×240 TFT | FT5x06 touch, RAK12501 (L76K) GNSS, SD on the panel bus, Home button, buzzer, 2 LEDs, li-ion |
@@ -242,7 +248,8 @@ must be powered first.
 | Board | SDA | SCL | Pre-step | Expected addresses |
 |---|---|---|---|---|
 | tdeck | 18 | 8 | drive **GPIO10 HIGH** (master rail) | 0x55 kbd, 0x5D/0x14 touch, 0x40 ES7210, 0x51 RTC (opt) |
-| heltecv4 | 17 | 18 | drive **GPIO36 LOW** (Vext on); pulse **GPIO21** reset | 0x3C OLED |
+| heltecv4-r2 | 17 | 18 | drive **GPIO36 LOW** (Vext on); pulse **GPIO21** reset | 0x3C OLED |
+| heltecv4-r8 | 17 | 18 | drive **GPIO40 LOW** (Vext on); pulse **GPIO21** reset | 0x3C OLED |
 | meshnology-w12 | 17 | 18 | drive **GPIO45 LOW** (Vext on); pulse **GPIO21** reset | 0x3C OLED |
 | lilygo-tbeam-supreme (PMU bus) | 42 | 41 | — (the PMU is always powered) | 0x34 AXP2101, 0x51 PCF8563 |
 | lilygo-tbeam-supreme (peripheral bus) | 17 | 18 | AXP2101 **ALDO1/2/4 on** at 3.3 V | 0x3C/0x3D OLED, 0x76 BME280 |
@@ -269,7 +276,7 @@ must be powered first.
 | **PCA9554** IO expander | 0x20 | No ID register — identify by **ACK at 0x20**, which is also what licenses writing to it. That write has to happen before the rest of the bus is worth reading: the part powers up with every line an input, and on the 2.8B its lines hold the touch and panel resets. Output register (0x01) first, then direction (0x03), never the other way round. | waveshare-28b |
 | **AXP2101** PMU | 0x34 | No ID register worth trusting — identify by **ACK at 0x34** on the board's own PMU pins, which is also what licenses writing to it. The rail control is `LDO_EN0` (0x90), one enable bit per ALDO, with each rail's voltage in 0x92..0x95 at 100 mV/LSB above 500 mV. | tbeam-supreme |
 | **FT5x06** capacitive touch | 0x38 | No ID register needed — a plain **ACK at 0x38** is decisive on the pins that carry it. **Poll it**: the controller runs its own firmware off the peripheral rail the probe just raised and can miss the first attempt after a cold power-on, so try for ~600 ms before calling it absent. | wismesh-tap-v2 |
-| **SSD1306**-class OLED (SSD1306 / SSD1315 / SH1106) | 0x3C (alt 0x3D) | No ID register — identify by **ACK**. The three parts are indistinguishable on the bus and none of them needs telling apart to name a board. On heltec and the W12, enable Vext (GPIO36 / GPIO45 LOW) and pulse the reset (GPIO21) first or it won't ACK; on the T-Beam Supreme the panel is behind an AXP2101 rail. | heltec, w12, tbeam-supreme, t3s3, nibble |
+| **SSD1306**-class OLED (SSD1306 / SSD1315 / SH1106) | 0x3C (alt 0x3D) | No ID register — identify by **ACK**. The three parts are indistinguishable on the bus and none of them needs telling apart to name a board. On heltec and the W12, enable Vext (GPIO36 on the V4 R2, GPIO40 on the R8, GPIO45 on the W12 — LOW) and pulse the reset (GPIO21) first or it won't ACK; on the T-Beam Supreme the panel is behind an AXP2101 rail. | heltec, w12, tbeam-supreme, t3s3, nibble |
 | **BME280** environmental | 0x76 (alt 0x77) | Chip-ID reg **0xD0**: **0x60** = BME280 (0x58 = BMP280, 0x61 = BME680). | nibble |
 | **Camera** (SCCB) — OV2640 / OV5640 / OV3660 / OV7670 / OV7725 / GC2145 / GC0308 | 0x30, 0x3C, 0x21 | The camera is the Sense board's **only** anchor (PDM mic has no bus ID, empty SD slot answers nothing), so `det_camera` probes each sensor by chip-ID, the way esp32-camera/seccam do, and reports the model. **Its SCCB block is clocked from XCLK** — the sensor won't ACK at all until a master clock runs, so `det_camera` first drives ~20 MHz on the XCLK pin (GPIO10 on the XIAO Sense) via LEDC, then probes, then stops it. **OV2640** @0x30 (8-bit regs): bank 0xFF=1, then PID 0x0A=0x26, 0x0B=0x41/0x42. **OV5640/OV3660** @0x3C (16-bit regs): chip ID 0x300A/0x300B = 0x56/0x40 or 0x36/0x60. **GC2145** @0x3C (8-bit): 0xF0/0xF1 = 0x21/0x45. **OV7670/OV7725/GC0308** @0x21 (8-bit): 0x0A/0x0B = 0x76/0x73 or 0x77/0x21; GC0308 reg 0x00 = 0x9B. Model goes in brackets on the `DETECTED:` line. | xiao-esp32s3-sense |
 | **QMI8658** IMU | 0x6A/0x6B | WHO_AM_I reg **0x00 = 0x05**. The address is the part's SA0 strapping: 0x6B with it high, 0x6A with it low. (The same part is also made for SPI, and the Supreme's is wired that way — on the peripheral SPI host, where no I2C scan reaches it.) | waveshare-28b (0x6B) |
@@ -293,7 +300,7 @@ Radio SPI pins by board:
 | Board | SCK | MOSI | MISO | CS | RST | BUSY | IRQ/DIO1 |
 |---|---|---|---|---|---|---|---|
 | tdeck | 40 | 41 | 38 | 9 | 17 | 13 | 45 |
-| heltecv4 | 9 | 10 | 11 | 8 | 12 | 13 | 14 |
+| heltecv4-r2 / -r8 | 9 | 10 | 11 | 8 | 12 | 13 | 14 |
 | meshnology-w12 | 9 | 10 | 11 | 8 | 12 | 13 | 14 (chip DIO8) |
 | lilygo-tbeam-supreme | 12 | 11 | 13 | 10 | 5 | 4 | 1 |
 | wismesh-tap-v2 | 5 | 6 | 3 | 7 | 8 | 48 | 47 |

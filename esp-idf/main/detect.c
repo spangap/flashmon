@@ -13,7 +13,7 @@
 // itself a copy of spangap-core's.
 //
 //     hw-lilygo-tdeck/esp-idf/src/detect.cpp   detect_hw  →  detect_hw_lilygo_tdeck
-//     hw-heltecv4/esp-idf/src/detect.cpp       detect_hw  →  detect_hw_heltecv4
+//     hw-heltecv4-r2/esp-idf/src/detect.cpp    detect_hw  →  detect_hw_heltecv4_r2
 //     hw-meshnology-w12/esp-idf/src/detect.cpp detect_hw  →  detect_hw_meshnology_w12
 //     …
 //
@@ -327,9 +327,12 @@ static const char *detect_hw_lilygo_tbeam_supreme(void)
     return "hw-lilygo-tbeam-supreme";
 }
 
-// hw-heltecv4 — DRIVES RAILS (Vext + the OLED reset), so it runs after every
-// passive probe above.
-#define HT_VEXT       36
+// hw-heltecv4-r2 / hw-heltecv4-r8 — DRIVE RAILS (Vext + the OLED reset), so
+// they run after every passive probe above. One PCB on two modules: the eFuse
+// PSRAM size picks the module before either touches a pin, which matters
+// because the R2's Vext gate (GPIO 36) is an octal-PSRAM line on the R8.
+#define HT_R2_VEXT    36
+#define HT_R8_VEXT    40
 #define HT_OLED_SDA   17
 #define HT_OLED_SCL   18
 #define HT_OLED_RST   21
@@ -340,20 +343,21 @@ static const char *detect_hw_lilygo_tbeam_supreme(void)
 #define HT_LORA_RST   12
 #define HT_LORA_BUSY  13
 
-static const char *detect_hw_heltecv4(void)
+static const char *detect_hw_heltecv4_r2(void)
 {
     if (!detect_flash_mb(16)) return NULL;
+    if (!detect_psram_mb(2)) return NULL;
 
-    detect_rail_drive(HT_VEXT, 0);                 /* Vext on (active low) */
+    detect_rail_drive(HT_R2_VEXT, 0);              /* Vext on (active low) */
     detect_rail_drive(HT_OLED_RST, 0);             /* pulse the OLED reset */
     esp_rom_delay_us(5000);
     gpio_set_level((gpio_num_t)HT_OLED_RST, 1);
     vTaskDelay(pdMS_TO_TICKS(50));
 
     if (!detect_ack2(HT_OLED_SDA, HT_OLED_SCL, 0x3C, 0x3D)) {
-        detect_dbg("no OLED on 17/18 — not a Heltec V4");
+        detect_dbg("no OLED on 17/18 — not a Heltec V4 R2");
         detect_rail_release(HT_OLED_RST);
-        detect_rail_release(HT_VEXT);
+        detect_rail_release(HT_R2_VEXT);
         return NULL;
     }
     // The modem, by name. An OLED on 17/18 with a radio on this header is not
@@ -362,14 +366,44 @@ static const char *detect_hw_heltecv4(void)
     // end of it — an SX1262 here, an LR2021 there.
     if (!detect_radio_is(HT_LORA_SCK, HT_LORA_MOSI, HT_LORA_MISO,
                          HT_LORA_CS, HT_LORA_RST, HT_LORA_BUSY, "sx1262")) {
-        detect_dbg("OLED answered but no SX1262 — not a Heltec V4");
+        detect_dbg("OLED answered but no SX1262 — not a Heltec V4 R2");
         detect_rail_release(HT_OLED_RST);
-        detect_rail_release(HT_VEXT);
+        detect_rail_release(HT_R2_VEXT);
         return NULL;
     }
 
-    detect_found("hw_heltecv4");
-    return "hw-heltecv4";
+    detect_found("hw_heltecv4_r2");
+    return "hw-heltecv4-r2";
+}
+
+static const char *detect_hw_heltecv4_r8(void)
+{
+    if (!detect_flash_mb(16)) return NULL;
+    if (!detect_psram_mb(8)) return NULL;
+
+    detect_rail_drive(HT_R8_VEXT, 0);              /* Vext on (active low) */
+    detect_rail_drive(HT_OLED_RST, 0);             /* pulse the OLED reset */
+    esp_rom_delay_us(5000);
+    gpio_set_level((gpio_num_t)HT_OLED_RST, 1);
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    if (!detect_ack2(HT_OLED_SDA, HT_OLED_SCL, 0x3C, 0x3D)) {
+        detect_dbg("no OLED on 17/18 — not a Heltec V4 R8");
+        detect_rail_release(HT_OLED_RST);
+        detect_rail_release(HT_R8_VEXT);
+        return NULL;
+    }
+    // The modem, by name: an SX1262 here, an LR2021 on the W12.
+    if (!detect_radio_is(HT_LORA_SCK, HT_LORA_MOSI, HT_LORA_MISO,
+                         HT_LORA_CS, HT_LORA_RST, HT_LORA_BUSY, "sx1262")) {
+        detect_dbg("OLED answered but no SX1262 — not a Heltec V4 R8");
+        detect_rail_release(HT_OLED_RST);
+        detect_rail_release(HT_R8_VEXT);
+        return NULL;
+    }
+
+    detect_found("hw_heltecv4_r8");
+    return "hw-heltecv4-r8";
 }
 
 // hw-meshnology-w12 — DRIVES RAILS (Vext + the OLED reset), so it runs after
@@ -688,7 +722,8 @@ void app_main(void)
         detect_hw_xiao_esp32s3_sx1262,
         detect_hw_waveshare_28b,
         detect_hw_lilygo_tbeam_supreme,
-        detect_hw_heltecv4,
+        detect_hw_heltecv4_r2,
+        detect_hw_heltecv4_r8,
         detect_hw_meshnology_w12,
         detect_hw_wismesh_tap_v2,
         detect_hw_lilygo_tdeck,

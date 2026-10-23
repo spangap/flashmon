@@ -14,6 +14,6 @@ idf_component_register(
     SRCS "detect.c"
     INCLUDE_DIRS "."
     REQUIRES driver esp_driver_i2c esp_driver_spi esp_driver_ledc esp_driver_uart
-             spi_flash esp_partition
+             spi_flash esp_partition efuse
 )
 target_compile_definitions(${COMPONENT_LIB} PRIVATE DETECT_EXTRAS=1 DETECT_TRACE_AT_INFO=1)

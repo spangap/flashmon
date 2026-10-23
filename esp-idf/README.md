@@ -62,19 +62,21 @@ pin** when the physical flash size rules its board out — 16 MB → tdeck/helte
 8 MB → xiao-sense, 4 MB → t3s3/nibble (the xiao-sx1262 probe accepts **8 or
 16 MB** — the Wio-SX1262 fits both the base XIAO and the 16 MB Plus). This is
 both a speed and a safety win (a
-rail-driving probe never runs on a board of the wrong size). PSRAM size would
-split the 16 MB pair (tdeck 8 MB vs heltec 2 MB) further, but a single RAM image
-**can't read PSRAM** — its octal-vs-quad mode is build-fixed and `CONFIG_SPIRAM`
-is off here — so the gate is flash-only and the peripheral anchor (keyboard vs
-OLED) settles same-flash boards. `flash_mb` fails **open** on an SFDP read error,
-so a probe is never skipped just because the size couldn't be read.
+rail-driving probe never runs on a board of the wrong size). A RAM image can't
+initialise PSRAM — its octal-vs-quad mode is build-fixed and `CONFIG_SPIRAM` is
+off here — but it can read the **embedded PSRAM size** from the eFuses
+(`detect_psram_mb`), which is how the Heltec V4 R2 (2 MB) and R8 (8 MB) probes
+tell the two modules apart before either drives a pin. Other same-flash boards
+are settled by the peripheral anchor (keyboard vs OLED, then the radio). Both
+gates fail **open** on a read error, so a probe is never skipped just because a
+size couldn't be read.
 
 ## Probe ordering (a safety property)
 
 `BOARDS[]` is ordered deliberately — **the fragile hardware comes first**. Boards
 identifiable by **passive bus reads** (nibble, t3s3, xiao-sense, xiao-sx1262) run
 before any board whose probe **drives a power-enable or reset GPIO** (heltec Vext
-GPIO36 + OLED reset GPIO21, then tdeck rail GPIO10), because those pins mean
+GPIO36 on the R2 or GPIO40 on the R8, + OLED reset GPIO21, then tdeck rail GPIO10), because those pins mean
 something else entirely on the board they are not looking at. Since the run stops
 at the first hit, a board found by reads alone is settled before a rail-driving
 probe ever touches it.
@@ -130,9 +132,9 @@ build/spangap_detect.bin`, then open a serial monitor at 115200.
 
 - **ESP32-S3 only** — every supported board is an S3. Other targets would need
   their own pin tables.
-- **Power rails:** the heltec and tdeck functions drive the Heltec Vext (GPIO36 LOW)
+- **Power rails:** the heltec and tdeck functions drive the Heltec Vext (GPIO36 LOW on the R2, GPIO40 LOW on the R8)
   + OLED reset (GPIO21) and the T-Deck master rail (GPIO10 HIGH) so those boards'
-  buses respond. These pins mean other things on other boards, so those two
+  buses respond. These pins mean other things on other boards, so those
   probes run last (see ordering above), the drives are brief, each is restored to
   hi-Z on exit, and the chip is reset into real firmware afterward.
 - **GNSS** is probed only **inside** `detect_hw_lilygo_tdeck`, after the keyboard and
