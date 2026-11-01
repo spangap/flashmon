@@ -19,6 +19,10 @@
 #             device hostname) uses this, so your deployment reads as its own
 #             product rather than "flashmon". It also slugs the image names.
 #   url:      where THIS deployment is served.
+#   notify:   optional. The GitHub repo (owner/repo) whose site serves this
+#             catalogue: `spangap publish-builds` sends it a
+#             catalogue-published repository_dispatch once the catalogue's
+#             release is up to date, so its deploy copies the new images in.
 #   builds:   the catalogue of ready-to-flash images. Each entry is:
 #               name        the image name, and its distribution identity — the
 #                           device reports it back as sys.build.dist, so a
