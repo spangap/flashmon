@@ -370,8 +370,8 @@ function log(msg, cls) {
 // worth spotting across a row of tabs (the glyph survives a tab squeezed too
 // narrow for any text): ❌ while the serial port is gone, 🔥 while an image is
 // being written ("<host> - flashing"). While flashing, the big header shrinks
-// to "Flashing <project>" with the image's name (its zip filename, extension
-// dropped) as a subheading under it.
+// to "Flashing <project>" with the image's name ("<catalogue>/" and its zip
+// filename, extension dropped) as a subheading under it.
 let titleHost = null;
 let titleMode = 'ok';        // 'ok' | 'gone' | 'flashing'
 let flashingImage = null;    // the image name shown while flashing
@@ -413,7 +413,7 @@ function markTitleGone(gone) {
   titleMode = gone ? 'gone' : 'ok';
   renderMonTitle();
 }
-// `image` (the zip filename without its extension) enters the flashing state;
+// `image` ("<catalogue>/<zip filename without its extension>") enters the flashing state;
 // null leaves it — though every flash path's closing monitor re-open lands in
 // setMonTitle, which leaves it as well.
 function markTitleFlashing(image) {
@@ -6023,7 +6023,8 @@ async function runPendingFlash() {
     // flashing" up top, the header down to "Flashing <project>" with the
     // image's name under it. The monitor re-open at the end resets both.
     setMonTitle(host);                          // closeMonitor cleared it
-    markTitleFlashing(decodeURIComponent(url.split('/').pop() || '').replace(/\.zip$/, ''));
+    markTitleFlashing(`${CATALOGUE}/` +
+      decodeURIComponent(url.split('/').pop() || '').replace(/\.zip$/, ''));
     $('monitor').hidden = true;                 // reveal the intro screen behind it
     try {
       let banner = await flash(port, plan);
