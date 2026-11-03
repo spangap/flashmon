@@ -104,13 +104,21 @@ const cleanCatalogue = (s) => (s || '').replace(/[^A-Za-z0-9._-]/g, '');
 // page is being served locally. Attaching a board flashed from somewhere else
 // must not quietly move the page — with auto-flash on, that would flash the
 // board from a catalogue nobody here is building.
-let CATALOGUE = cleanCatalogue(params.get('build'))
+//
+// A pick in the Build selector is remembered for this browser and is where the
+// next load starts, ahead of the local default; `?build=` still outranks it for
+// that load.
+const CATALOGUE_KEY = 'flashmon.catalogue';
+function storedCatalogue() {
+  try { return cleanCatalogue(localStorage.getItem(CATALOGUE_KEY)); } catch (_) { return ''; }
+}
+let CATALOGUE = cleanCatalogue(params.get('build')) || storedCatalogue()
   || (SERVED_LOCALLY ? LOCAL_CATALOGUE : 'stable');
 let CAT_BASE = `${BUILDS_BASE}${CATALOGUE}/`;
 // True once something other than the default has claimed the choice — a
-// `?build=`, the local default, or the user picking one. A device's own
-// catalogue is adopted only while nothing has.
-let cataloguePinned = !!cleanCatalogue(params.get('build')) || SERVED_LOCALLY;
+// `?build=`, a remembered pick, the local default, or the user picking one. A
+// device's own catalogue is adopted only while nothing has.
+let cataloguePinned = !!cleanCatalogue(params.get('build')) || !!storedCatalogue() || SERVED_LOCALLY;
 
 // Filled from builds.yaml at boot. `project` brands the UI; `builds` is the
 // catalogue of entries (each a `name` matched against the detected hw-<board>).
@@ -6516,7 +6524,10 @@ async function refreshCatalogue() {
 async function setCatalogue(name, pin) {
   const want = cleanCatalogue(name);
   if (!want) return;
-  if (pin) cataloguePinned = true;
+  if (pin) {
+    cataloguePinned = true;
+    try { localStorage.setItem(CATALOGUE_KEY, want); } catch (_) { /* storage blocked */ }
+  }
   syncBuildSelector();
   if (want === CATALOGUE) return;
   CATALOGUE = want;

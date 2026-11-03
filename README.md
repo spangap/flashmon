@@ -218,7 +218,9 @@ outranking the one before it:
    `builds/index.html` lists, plus the one in force and the one the device named
    — either can be `.unlisted`. **- other -** takes a name that is served but
    listed nowhere. Picking one pins it: the next device's own catalogue no longer
-   moves the page.
+   moves the page. The pick is also remembered in this browser
+   (`flashmon.catalogue` in localStorage): a later load without a `?build=`
+   starts there, pinned, rather than on `stable` or `local`.
 
 Switching catalogue re-reads everything, re-brands the page from the new
 catalogue's `project:`, and offers what the new catalogue holds for the attached
