@@ -176,6 +176,58 @@ static const char *detect_hw_xiao_esp32s3_sx1262(void)
     return "hw-xiao-esp32s3-sx1262";
 }
 
+// hw-seeed-l2pro — WRITES AN IO EXPANDER once it has answered at 0x21 on 47/48,
+// and nothing else: the LP5814 backlight driver and the ADS1115 sit behind its
+// rails, which come out of a power loss as inputs. The write is the rest state
+// the board's onStart sets. Then three ACKs, and the Wio-S3's SX1262 to confirm.
+#define L2_I2C_SDA     47
+#define L2_I2C_SCL     48
+#define L2_EXP_ADDR  0x21
+#define L2_EXP_REST0 0xF7
+#define L2_EXP_REST1 0xE1
+#define L2_EXP_IN0   0x07
+#define L2_BL_ADDR   0x2C
+#define L2_ADC_ADDR  0x48
+#define L2_LORA_SCK     4
+#define L2_LORA_MOSI    6
+#define L2_LORA_MISO    5
+#define L2_LORA_CS     21
+#define L2_LORA_RST     7
+#define L2_LORA_BUSY    8
+
+static const char *detect_hw_seeed_l2pro(void)
+{
+    if (!detect_flash_mb(16)) return NULL;
+
+    detect_i2c_t h;
+    if (!detect_i2c_open(&h, L2_I2C_SDA, L2_I2C_SCL)) return NULL;
+    bool exp = detect_i2c_ack(&h, L2_EXP_ADDR);
+    if (exp) {
+        detect_i2c_wr(&h, L2_EXP_ADDR, 0x02, L2_EXP_REST0);   /* outputs, port 0 */
+        detect_i2c_wr(&h, L2_EXP_ADDR, 0x03, L2_EXP_REST1);   /* outputs, port 1 */
+        detect_i2c_wr(&h, L2_EXP_ADDR, 0x06, L2_EXP_IN0);     /* directions, port 0 */
+        detect_i2c_wr(&h, L2_EXP_ADDR, 0x07, 0x00);           /* directions, port 1 */
+        vTaskDelay(pdMS_TO_TICKS(50));                        /* rails settle */
+    }
+    bool bl  = exp && detect_i2c_ack(&h, L2_BL_ADDR);
+    bool adc = bl  && detect_i2c_ack(&h, L2_ADC_ADDR);
+    detect_i2c_close(&h);
+    if (!adc) {
+        detect_miss("expander=%d backlight=%d adc=%d — not a Wio Tracker L2 Pro",
+                    exp, bl, adc);
+        return NULL;
+    }
+
+    if (!detect_radio_is(L2_LORA_SCK, L2_LORA_MOSI, L2_LORA_MISO,
+                         L2_LORA_CS, L2_LORA_RST, L2_LORA_BUSY, "sx1262")) {
+        detect_miss("I2C parts answered but no SX1262 — not a Wio Tracker L2 Pro");
+        return NULL;
+    }
+
+    detect_found("hw_seeed_l2pro");
+    return "hw-seeed-l2pro";
+}
+
 // hw-waveshare-28b — WRITES AN IO EXPANDER, and nothing else: no rail, no pin
 // driven blind. The write is on I2C and licensed by the expander answering at
 // 0x20 on 15/7, which nothing else here uses as a bus. It has to happen: the
@@ -720,6 +772,7 @@ void app_main(void)
         detect_hw_lilygo_t3s3_lr1121,
         detect_hw_xiao_esp32s3_sense,
         detect_hw_xiao_esp32s3_sx1262,
+        detect_hw_seeed_l2pro,
         detect_hw_waveshare_28b,
         detect_hw_lilygo_tbeam_supreme,
         detect_hw_heltecv4_r2,

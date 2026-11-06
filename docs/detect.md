@@ -182,7 +182,8 @@ ACKed at its own address on the board's own I2C pins — but it is still a chang
 so it sits after the passive probes and restores the PMU's enable register when
 it fails.
 
-A third kind writes an **IO expander** (`hw-waveshare-28b`: the touch
+A third kind writes an **IO expander** (`hw-seeed-l2pro`: its backlight driver
+and battery ADC sit behind expander rails; `hw-waveshare-28b`: the touch
 controller's and the panel's resets are its lines, and a PCA9554 powers up
 holding every line as an input, so nothing else on that bus is worth reading
 until it has been written). Like the PMU write it is licensed by the part
@@ -233,6 +234,7 @@ USB-to-UART bridge whose DTR/RTS lines reset it, and it waits for that reset.
 | `meshnology-w12` | ESP32-S3 16MB/8MB-oct | LR2021 | SSD1315 128×64 OLED | Vext rail, GC1109 30 dBm PA + RFX2402E 2.4 GHz PA (radio-switched), L76K GNSS header, battery ADC, RGB LED |
 | `lilygo-tbeam-supreme` | ESP32-S3 8MB/8MB-quad | SX1262 (or LR1121/SX1278 on the same pins) | SH1106 128×64 OLED | AXP2101 PMU gating every rail, PCF8563 RTC on the PMU bus, L76K/u-blox GNSS, SD, IMU + magnetometer + BME280 (unwired), 18650 holder |
 | `wismesh-tap-v2` | ESP32-S3 16MB/8MB-oct | SX1262 (inside the RAK3112 module, private bus) | ST7789 320×240 TFT | FT5x06 touch, RAK12501 (L76K) GNSS, SD on the panel bus, Home button, buzzer, 2 LEDs, li-ion |
+| `seeed-l2pro` | ESP32-S3 16MB/8MB-oct | SX1262 (inside the Wio-S3 module, private bus) | NV3031B 320×240 IPS, **quad SPI** | GT911 touch, LP5814 backlight driver, TCA9535-class expander (every rail and reset), L76K GNSS, ES8311 + ES7243E audio, ADS1115 battery ADC, SD on SDMMC, U/B + side key |
 | `waveshare-p4-43` | **ESP32-P4** 32MB/32MB-hex | none (Wi-Fi/BLE on an ESP32-C6 over SDIO) | ST7701 480×800 IPS, **2-lane MIPI-DSI** | GT911 touch (polled, reset GPIO23), ES8311 codec + ES7210 mics on SDA7/SCL8, SD on SDMMC slot 0, CH343P console, li-ion + charger |
 | `waveshare-28b` | ESP32-S3 16MB/8MB-oct | none (WiFi/BLE) | ST7701S 480×640 IPS, **16-bit RGB parallel** | GT911 touch, QMI8658 IMU, PCF85063 RTC, PCA9554 expander (both resets, both chip-selects), SD sharing the panel's config wires, buzzer, li-ion + charger |
 | `lilygo-t3s3` | ESP32-S3 4MB/2MB-quad | SX1262 (`-sx1262`) or LR1121 (`-lr1121`); SX1276/SX1280 variants have no straddle | SSD1306 OLED (unwired) | SD (own bus) |
@@ -254,6 +256,7 @@ must be powered first.
 | lilygo-tbeam-supreme (PMU bus) | 42 | 41 | — (the PMU is always powered) | 0x34 AXP2101, 0x51 PCF8563 |
 | lilygo-tbeam-supreme (peripheral bus) | 17 | 18 | AXP2101 **ALDO1/2/4 on** at 3.3 V | 0x3C/0x3D OLED, 0x76 BME280 |
 | wismesh-tap-v2 | 9 | 40 | drive **GPIO14 HIGH** (3V3 peripheral rail) | 0x38 FT5x06 touch |
+| seeed-l2pro | 47 | 48 | write the **expander at 0x21** to its rest state (rails on: outputs F7/E1, directions 07/00) | 0x21 expander, 0x2C LP5814 (+ 0x34, its broadcast address), 0x48 ADS1115 (once the rails are on); 0x5D GT911, 0x18 ES8311, 0x14 ES7243E, 0x22 AW35615 |
 | waveshare-p4-43 | 7 | 8 | pulse **GPIO23** (GT911 reset) before asking for the touch controller | 0x18 ES8311, 0x40 ES7210, 0x5D/0x14 GT911 |
 | waveshare-28b | 15 | 7 | write the **PCA9554 at 0x20** (outputs high, then directions) to release the touch and panel resets it holds | 0x20 PCA9554, 0x5D/0x14 GT911, 0x6B QMI8658, 0x51 PCF85063 |
 | lilygo-t3s3 | 18 | 17 | — | 0x3C OLED |
@@ -304,6 +307,7 @@ Radio SPI pins by board:
 | meshnology-w12 | 9 | 10 | 11 | 8 | 12 | 13 | 14 (chip DIO8) |
 | lilygo-tbeam-supreme | 12 | 11 | 13 | 10 | 5 | 4 | 1 |
 | wismesh-tap-v2 | 5 | 6 | 3 | 7 | 8 | 48 | 47 |
+| seeed-l2pro | 4 | 6 | 5 | 21 | 7 | 8 | 9 |
 | lilygo-t3s3 | 5 | 6 | 3 | 7 | 8 | 34 | 33 (LR1121: 36, chip DIO9) |
 | nibble-zero | 13 | 11 | 12 | 10 | 6 | 5 | 4 |
 | xiao-esp32s3-sx1262 | 7 | 9 | 8 | 41 | 42 | 40 | 39 |
@@ -313,7 +317,7 @@ Radio SPI pins by board:
 | Interface | Identify | Boards |
 |---|---|---|
 | **SD over SPI** | Standard init: CMD0 (→ idle 0x01) → CMD8 → ACMD41 → CMD58; then read CID (CMD10) / CSD (CMD9) for manufacturer ID and size. | tdeck (CS 39, on the display bus 40/41/38), t3s3 (host 3: SCK 14/MOSI 11/MISO 2, CS 13) |
-| **SD over SDMMC (1-bit)** | CMD0/CMD8/ACMD41 on the SDMMC peripheral (CLK 7, CMD 9, D0 8; 1-bit only). | xiao-esp32s3-sense |
+| **SD over SDMMC (1-bit)** | CMD0/CMD8/ACMD41 on the SDMMC peripheral (CLK 7, CMD 9, D0 8; 1-bit only). | xiao-esp32s3-sense; seeed-l2pro (CLK 2, CMD 3, D0 1, card powered by an expander line) |
 
 A card is not always reachable even where one is fitted: on `waveshare-28b` the
 chip-select is an IO expander line rather than a GPIO, so selecting the card
@@ -396,3 +400,10 @@ the esptool probe already reports before this binary even runs.
 - **0x20** is the bottom of the PCA95xx/TCA95xx strap range, so an expander at
   0x20 says "an expander" rather than "a PCA9554" — on the 2.8B it is decisive
   only because nothing else on this board list uses 15/7 as a bus at all.
+- **0x34** is the AXP2101 on the Supreme's PMU bus, the default TCA8418 keypad
+  address, and the LP5814/5/6/7 broadcast address — on the L2 Pro it is the
+  backlight driver answering a second time. An ACK there names nothing without
+  the pins.
+- **0x21 / 0x2C / 0x48** together are the L2 Pro's anchor: each alone is a
+  common address (a second expander strap, an LED driver, any ADS1x15), so the
+  probe wants all three on 47/48 and then the SX1262 on the module's pins.
