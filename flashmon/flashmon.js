@@ -3293,8 +3293,11 @@ function handleNetLine(m, line) {
     rosterNote(mm[1], mm[2], portUsbKey(m.port));
     const rest = mm[3] || '';
     const fw = rest.match(/, fw (?:([^/\s,]+)\/)?([^\s,]+)_(\d{14})\b/);
+    // A generic image names no board, so its dist stands in for one: the
+    // device is matched to the same generic image, and kept current with it.
     const hw = (rest.match(/, hw (hw-[a-z0-9-]+)\b/) || [])[1]
-      || (fw && (fw[2].match(/(hw-[a-z0-9-]+)$/) || [])[1]);
+      || (fw && (fw[2].match(/(hw-[a-z0-9-]+)$/) || [])[1])
+      || (fw && (fw[2].match(/_(generic(?:-[a-z0-9-]+)?)$/) || [])[1]);
     // The same facts the `build:` boot-log lines carry, with the same
     // strength: a running image has already proved dist and hardware agree
     // (spangap halts on a mismatch), so the board named here is detector-grade.
@@ -5481,10 +5484,14 @@ function isFnb58Port(port) {
 
 // ── detector output ─────────────────────────────────────────────────────────
 // The detector's `DETECTED: hw-<board>` line, if any (extras in parentheses are
-// dropped): the hw-<board> token to match against the catalogue.
+// dropped): the hw-<board> token to match against the catalogue. Where no board
+// answered, the detector may name the generic image the chip can run instead
+// (`DETECTED: generic-esp32s3-opsram (no board matched; …)`) — it reads the
+// flash type, flash size and PSRAM off the chip, a separate PSRAM chip included,
+// so that choice is made there and only read here.
 function detectedHw(lines) {
   for (const l of lines) {
-    const m = l.match(/^DETECTED:\s+(hw-[a-z0-9-]+)/);
+    const m = l.match(/^DETECTED:\s+(hw-[a-z0-9-]+|generic(?:-[a-z0-9-]+)?)(?:\s|$)/);
     if (m) return m[1];
   }
   return null;
@@ -5554,7 +5561,7 @@ function renderBoardPick(f) {
   const pick = $('device-pick');
   const sel = $('device-pick-board');
   if (!pick || !sel) return;                  // page older than this script
-  pick.hidden = !(f.probed && (!f.hw || f.picked));
+  pick.hidden = !(f.probed && (!f.hw || f.picked || f.generic));
   if (pick.hidden) return;
   if (!sel.options.length) {
     sel.add(new Option('— choose —', ''));
@@ -5569,18 +5576,25 @@ on('device-pick-board', 'change', (e) => {
   const hw = e.target.value;
   if (!deviceFacts || !monitor) return;
   if (!hw) {
-    // Back to "— choose —": the claim is withdrawn, and with it the offer.
+    // Back to "— choose —": the claim is withdrawn, and with it the offer — or,
+    // on a chip that had the generic image, back to that.
     if (!deviceFacts.picked) return;
-    deviceFacts.hw = null;
+    const g = deviceFacts.fallback || null;
+    deviceFacts.hw = g;
+    deviceFacts.generic = !!g;
     deviceFacts.picked = false;
-    monitor.hw = null;
+    monitor.hw = g;
+    monitor.hwFallback = !!g;
     pendingFlash = null;
+    if (g) resolveFlashOffer();
     renderDeviceBox();
     return;
   }
   deviceFacts.hw = hw;
+  deviceFacts.generic = false;
   deviceFacts.picked = true;
   monitor.hw = hw;
+  monitor.hwFallback = false;
   resolveFlashOffer();
   renderDeviceBox();
 });
@@ -5588,10 +5602,14 @@ on('device-pick-board', 'change', (e) => {
 function renderDeviceBox() {
   const f = deviceFacts;
   if (!f || !$('device-overlay')) return;     // no facts, or a page older than this script
-  const board = f.hw ? f.hw.replace(/^hw-/, '') : null;
+  const board = f.generic ? null : f.hw ? f.hw.replace(/^hw-/, '') : null;
   $('device-title').textContent = board || 'Device found';
   $('device-sub').textContent = f.picked
     ? `You named this board ${f.hw} — nothing on the chip confirmed it.`
+    : f.generic
+      ? 'No supported board matched it, but the chip has PSRAM, so it can run the '
+        + 'generic build: no radio, no screen, a node on WiFi. If you know which '
+        + 'board it is, say so below.'
     : !f.probed
       ? `Identified as ${f.hw} from its own boot log — the chip has not been probed.`
       : f.hw
@@ -5746,6 +5764,12 @@ function cancelStateWarn() { if (stateWarnClose) stateWarnClose(false); }
 function buildCandidates(hw, chip) {
   const names = new Set(BUILD_NAMES);
   const out = [];
+  // A generic image stands for no board, so it has no prefixes to walk and no
+  // other image to fall to: it is offered as itself or not at all.
+  if (isGeneric(hw)) {
+    if (names.has(hw)) out.push(hw);
+    return out;
+  }
   let n = hw;
   while (n && n.startsWith('hw-') && n.length > 3) {
     if (names.has(n)) out.push(n);
@@ -5780,6 +5804,7 @@ function genericFor(chip) {
   return { name: mode ? `generic-${target}${mode}` : 'generic', target };
 }
 
+
 function projectSlug(project) {
   return (project || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'flashmon';
 }
@@ -5810,11 +5835,14 @@ function catalogueNewer(name, m) {
 // the invocation line the board can come from), so hold the offer until that
 // lands (or the window expires), then evaluate. `fromDetector` marks a board read
 // off the hardware by a detection run, which the boot log may not overwrite.
-function armFlashGrace(hw, fromDetector) {
+function armFlashGrace(hw, fromDetector, fallback) {
   if (!monitor) return;
   const m = monitor;
   m.hw = hw;
   m.hwDetected = !!fromDetector && !!hw;
+  // A generic image chosen because no detector named the board: offered, never
+  // auto-flashed (see maybeAutoFlash).
+  m.hwFallback = !!fallback && !!hw;
   // The device (or a detector) has now said which board it is, so a board named
   // by hand earlier no longer stands in — and no longer holds auto-flash back.
   if (deviceFacts) deviceFacts.picked = false;
@@ -5888,6 +5916,11 @@ function maybeAutoFlash() {
   // A board named by hand is a claim nothing has checked, so its image waits for
   // the Flash button like any other deliberate choice.
   if (deviceFacts && deviceFacts.picked) return;
+  // Nor is a generic image offered to a board nothing recognised: whatever that
+  // board runs now is firmware this page knows nothing about, and writing over
+  // it is the person's call, never a tab's. A device already running a generic
+  // image names it in its greeting, and that one updates like any other.
+  if (monitor && monitor.hwFallback) return;
   if (autoFlashed === pendingFlash.url) return;
   autoFlashed = pendingFlash.url;
   offerShownFor = pendingFlash.url;      // it is being flashed, not offered
@@ -6100,6 +6133,7 @@ async function runDetect() {
   // terminal back.
   let info = null;
   let hw = null;
+  let fallback = null;
   let banner;
   let facts = null;
   // ROM-loader traffic and the reset back into the firmware run on short timers,
@@ -6120,6 +6154,8 @@ async function runDetect() {
     if (info) {
       const detected = await runDetection(port);
       hw = detectedHw(detected);
+      // No board detector named it, but the chip can run the generic image.
+      if (isGeneric(hw)) fallback = hw;
       // What the run read off the flash outranks whatever a previous one did —
       // including "no state store", which is a real answer (a never-booted chip).
       // A run that captured nothing at all is no answer, so it changes nothing.
@@ -6133,6 +6169,8 @@ async function runDetect() {
         chip: info,
         periph: detected.filter((l) => !l.startsWith('DETECTED:')),
         hw,
+        generic: !!fallback,
+        fallback,
         state: statePart,
         probed: true,
       };
@@ -6180,7 +6218,7 @@ async function runDetect() {
   // lands in the same window as the findings below — it arrives a few seconds
   // later, with the device's build stamp, and the window repaints around it.
   if (monitor) monitor.chipInfo = info;
-  armFlashGrace(hw, true);
+  armFlashGrace(hw, true, !!fallback);
   // Only a run that reached the chip has anything to show.
   if (facts && monitor) showDeviceBox(facts);
 }

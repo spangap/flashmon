@@ -254,10 +254,21 @@ image on an octal-flash chip does not boot at all, so a missing variant offers
 nothing rather than the wrong one. A board named without a probe — by its own
 boot log — has no chip facts, and is offered plain `generic`.
 
-A board no detector could name gets no generic offer at all — only the manual
-board pick, which leaves the generic images out. A generic image runs on
-anything, so offering one there would let auto-flash write it over firmware the
-page knows nothing about.
+**A board no detector could name** may still be matched to a generic image, and
+the detector is what says so: on an ESP32-S3 that no board answered it reads
+the flash type, the flash size and the PSRAM off the chip — a separate PSRAM
+chip included — and names the generic image that fits, or says why none does
+(see [`docs/detect.md`](docs/detect.md#the-generic-image)). flashmon only reads
+that answer. With none there is no generic offer, only the manual board pick
+(which leaves the generic images out). The device window says the board went
+unrecognised, offers the generic build, and keeps the board pick open beside it.
+
+That offer is **never auto-flashed**: whatever an unrecognised board runs is
+firmware the page knows nothing about, so writing over it waits for the Flash
+button, as a board named by hand does. Once it runs the generic image the device
+names it in its greeting (`fw <catalogue>/<slug>_generic-…_<stamp>`), is matched
+to that same image, and from then on updates like any other — auto-flash
+included.
 
 Only chip images are candidates. Each link in the listing carries `data-target`
 (`esp32s3`, `esp32p4`, or `linux` for a simulator's node package), and an entry in

@@ -680,6 +680,119 @@ static const char *detect_hw_waveshare_p4_43(void)
 }
 #endif  // CONFIG_IDF_TARGET_ESP32P4
 
+// ── the generic image ───────────────────────────────────────────────────────
+// When no board answers, an ESP32-S3 may still run a GENERIC image: no board
+// straddle, so no pins, no radio and no screen — a node on WiFi. What a running
+// chip cannot change is fixed in that image at build time, and it is read here
+// off the chip itself rather than inferred:
+//
+//   - octal FLASH (the eFuse bit the ROM boots by) — no generic image is built
+//     for it, so such a chip gets none;
+//   - the flash size (SFDP) — the image is laid out for an 8 MB container with
+//     its writable store above a 6 MB floor, so less than 8 MB gets none;
+//   - PSRAM, which a node with nothing but the network to do still needs: an
+//     in-package part records its size in the eFuses (8 MB and up is octal, 2
+//     and 4 MB are quad), and a separate chip — always quad, always on the
+//     flash bus's second chip-select, CS1 on GPIO 26 — answers the standard
+//     Read-ID. No PSRAM, no generic image.
+//
+// The answer names the image: `generic` (quad PSRAM) or `generic-esp32s3-opsram`
+// (octal). flashmon matches it like a board, but never auto-flashes it — a board
+// nobody recognised is running firmware the page knows nothing about.
+#if CONFIG_IDF_TARGET_ESP32S3
+#include "esp_rom_spiflash.h"
+#include "hal/gpio_ll.h"
+#include "hal/psram_ctrlr_ll.h"
+#include "soc/io_mux_reg.h"
+#include "soc/spi_pins.h"
+
+#define GENERIC_MIN_FLASH_MB  8
+
+// One SPI-mode command to whatever sits on CS1, through the flash controller's
+// second unit (SPI1), the way ESP-IDF's own quad-PSRAM driver talks to it
+// before the cache is pointed at it. CS0 — the flash — is never selected.
+static void det_cs1_cmd(esp_rom_spiflash_read_mode_t mode, uint32_t cmd,
+                        int addr_bits, uint8_t *rx, int rx_bits)
+{
+    esp_rom_spi_set_op_mode(PSRAM_CTRLR_LL_MSPI_ID_1, mode);
+    psram_ctrlr_ll_enable_quad_command(PSRAM_CTRLR_LL_MSPI_ID_1,
+                                       mode == ESP_ROM_SPIFLASH_QIO_MODE);
+    psram_ctrlr_ll_common_transaction_base(PSRAM_CTRLR_LL_MSPI_ID_1, mode,
+                                           cmd, 8, 0, addr_bits, 0,
+                                           NULL, 0, rx, rx_bits,
+                                           PSRAM_LL_CS_SEL, false);
+    psram_ctrlr_ll_enable_quad_command(PSRAM_CTRLR_LL_MSPI_ID_1, false);
+}
+
+// The size in MB of a separate quad PSRAM chip on CS1, or 0 for none. A chip
+// reset from the ROM loader leaves the PSRAM powered and possibly still in the
+// QPI mode the last firmware put it in, so it is taken out of QPI and reset
+// first, exactly as ESP-IDF does. The answer is an APMemory-style ID — maker,
+// then the known-good-die byte 0x5D, then density in the top bits of the next —
+// read twice, because 16 Mbit parts only answer the second time. Anything
+// without that 0x5D (a floating bus reads 0xFF or 0x00) is no PSRAM.
+static int det_ext_psram_mb(void)
+{
+    gpio_ll_func_sel(&GPIO, MSPI_IOMUX_PIN_NUM_CS1, FUNC_SPICS1_SPICS1);
+    det_cs1_cmd(ESP_ROM_SPIFLASH_QIO_MODE, 0xF5, 0, NULL, 0);      // exit QPI
+    det_cs1_cmd(ESP_ROM_SPIFLASH_SLOWRD_MODE, 0x66, 0, NULL, 0);   // reset enable
+    det_cs1_cmd(ESP_ROM_SPIFLASH_SLOWRD_MODE, 0x99, 0, NULL, 0);   // reset
+    uint32_t id = 0;
+    for (int i = 0; i < 2; i++) {
+        id = 0;
+        det_cs1_cmd(ESP_ROM_SPIFLASH_SLOWRD_MODE, 0x9F, 24, (uint8_t *)&id, 24);
+        if (((id >> 8) & 0xff) == 0x5d) break;
+    }
+    detect_dbg("CS1 read-id: %06lx", (unsigned long)(id & 0xffffff));
+    if (((id >> 8) & 0xff) != 0x5d) return 0;
+    switch (((id >> 16) >> 5) & 0x07) {
+    case 0:  return 2;
+    case 1:  return 4;
+    case 2:  return 8;
+    default: return 0;
+    }
+}
+
+// The generic image this chip can run, named into `out` with the facts that
+// chose it, or false with the reason in `why`.
+static bool det_generic(char *out, size_t outlen, char *why, size_t whylen)
+{
+    if (esp_efuse_read_field_bit(ESP_EFUSE_FLASH_TYPE)) {
+        snprintf(why, whylen, "octal flash, which no generic image is built for");
+        return false;
+    }
+    uint32_t flash = 0;
+    if (esp_flash_get_physical_size(NULL, &flash) != ESP_OK || flash == 0) {
+        snprintf(why, whylen, "flash size unreadable");
+        return false;
+    }
+    int flash_mb = (int)(flash / (1024u * 1024u));
+    if (flash_mb < GENERIC_MIN_FLASH_MB) {
+        snprintf(why, whylen, "%d MB flash, the generic image needs %d MB",
+                 flash_mb, GENERIC_MIN_FLASH_MB);
+        return false;
+    }
+    uint8_t cap = 0;
+    esp_efuse_read_field_blob(ESP_EFUSE_PSRAM_CAP, &cap, 3);
+    static const int8_t kCapMb[8] = { 0, 8, 2, 16, 4, -1, -1, -1 };
+    int psram_mb = kCapMb[cap & 7];
+    const char *where = "in package";
+    if (psram_mb <= 0) {
+        psram_mb = det_ext_psram_mb();
+        where = "on its own chip";
+    }
+    if (psram_mb <= 0) {
+        snprintf(why, whylen, "no PSRAM");
+        return false;
+    }
+    bool octal = psram_mb >= 8 && where[0] == 'i';
+    snprintf(out, outlen, "%s (no board matched; %d MB %s PSRAM %s, %d MB flash)",
+             octal ? "generic-esp32s3-opsram" : "generic",
+             psram_mb, octal ? "octal" : "quad", where, flash_mb);
+    return true;
+}
+#endif  // CONFIG_IDF_TARGET_ESP32S3
+
 // ── spangap state partition ─────────────────────────────────────────────────
 // Board-independent, and the one thing here the firmware never reports: where
 // the device keeps its own data. Read as it ACTUALLY exists on the chip, never
@@ -786,15 +899,31 @@ void app_main(void)
     for (size_t i = 0; i < sizeof(BOARDS) / sizeof(BOARDS[0]) && !hw; i++)
         hw = BOARDS[i]();
 
-    // The machine-readable answer flashmon reads out of the capture. The probe
-    // trace above is for a person; this line is the result.
-    if (hw) printf("DETECT: DETECTED: %s\n", hw);
-    else    printf("DETECT: no board matched\n");
+    // Read before the generic check: that one drives the flash controller's
+    // second unit by hand, and the partition scan wants it as the driver left it.
+    char state[96];
+    bool have_state = det_state_partition(state);  // flash, board-independent
 
-    char out[96];
-    if (det_state_partition(out)) {                // flash, board-independent
+    // The machine-readable answer flashmon reads out of the capture. The probe
+    // trace above is for a person; this line is the result. No board is not yet
+    // no answer: the chip may still run the generic image.
+    if (hw) {
+        printf("DETECT: DETECTED: %s\n", hw);
+    } else {
+#if CONFIG_IDF_TARGET_ESP32S3
+        char gen[128], why[96];
+        if (det_generic(gen, sizeof(gen), why, sizeof(why)))
+            printf("DETECT: DETECTED: %s\n", gen);
+        else
+            printf("DETECT: no board matched, and no generic image fits: %s\n", why);
+#else
+        printf("DETECT: no board matched\n");
+#endif
+    }
+
+    if (have_state) {
         printf("DETECT:\n");                       // blank line before the partition
-        printf("DETECT: DETECTED: %s\n", out);
+        printf("DETECT: DETECTED: %s\n", state);
     }
 
     printf("DETECT: SPANGAP-DETECT-END\n");        // sentinel: capture is done

@@ -5,7 +5,9 @@ A tiny RAM app — one per chip, ESP32-S3 by default, ESP32-P4 with
 that chip in turn
 and stops at the first that answers. It is uploaded into SRAM by flashmon —
 nothing is written to flash — and used only where a device cannot say for itself
-which board it is (see [`../docs/detect.md`](../docs/detect.md)).
+which board it is (see [`../docs/detect.md`](../docs/detect.md)). Where no board
+answers on an ESP32-S3, it names the generic image the chip can run instead, or
+says why none fits ([the generic image](../docs/detect.md#the-generic-image)).
 
 It emits two kinds of line, and flashmon keeps both:
 

@@ -209,6 +209,10 @@ The detector emits two kinds of line, and flashmon keeps both:
     DETECT: DETECTED: hw-lilygo-tdeck        the result, printed for the parser
     I (1234) detect: hw_lilygo_tdeck found   the trace, ordinary ESP-IDF logging
 
+A run in which no board answers is not yet a run with no answer: on an ESP32-S3
+the detector goes on to name the generic image the chip can run (below), and
+says why when there is none.
+
 Everything a probe learns on the way is logged at **debug** under the tag
 `detect`; the single line saying which board this is, is **info**. The detector
 raises that tag to debug for its own run, so the whole trace is captured. The
@@ -223,6 +227,37 @@ named by its own firmware or by the person flashing it.
 
 The P4 detector does not end in the ROM loader: the P4 board's console is a
 USB-to-UART bridge whose DTR/RTS lines reset it, and it waits for that reset.
+
+## The generic image
+
+A generic image stages no board straddle — no pins, no radio, no screen, a node
+on WiFi — so it runs on any ESP32-S3 whose build-time facts match. When no
+board answers, `det_generic()` reads those facts off the chip:
+
+- **octal flash** — the eFuse bit the ROM boots by. No generic image is built
+  for it, so such a chip gets none.
+- **flash size** — SFDP, as the board probes read it. The image is laid out for
+  an 8 MB container with its writable store above a 6 MB floor, so less than
+  8 MB gets none.
+- **PSRAM** — an in-package part records its size in the eFuses: 8 MB and up is
+  octal, 2 and 4 MB are quad. A separate PSRAM chip records nothing there, and is
+  always quad on the flash bus's second chip-select (CS1, GPIO 26), so it is
+  asked directly: taken out of QPI mode and reset, as ESP-IDF's own driver does,
+  then sent the standard Read-ID (0x9F). An APMemory-style answer carries the
+  known-good-die byte 0x5D and the density; anything else is no PSRAM. No PSRAM,
+  no generic image — a node with nothing but the network to do still needs it.
+
+```
+DETECT: DETECTED: generic-esp32s3-opsram (no board matched; 8 MB octal PSRAM in package, 16 MB flash)
+DETECT: DETECTED: generic (no board matched; 8 MB quad PSRAM on its own chip, 8 MB flash)
+DETECT: no board matched, and no generic image fits: 4 MB flash, the generic image needs 8 MB
+```
+
+flashmon matches the name like a board's, and never auto-flashes it (see the
+README's "How an image is matched"). The CS1 probe runs only here, after every
+board has declined and after the state-partition scan, since it drives the
+flash controller's second unit by hand; on a module GPIO 26 is the PSRAM's
+chip-select or not brought out at all.
 
 ## Boards at a glance
 
