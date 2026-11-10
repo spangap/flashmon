@@ -127,6 +127,7 @@ let PROJECT = 'flashmon';
 let BUILDS = [];
 let BUILD_NAMES = [];
 let SLUG = 'flashmon';
+let BRANDED = false;     // PROJECT/SLUG came from a config that was actually read
 // Build name -> the newest stamp published for it, read out of the catalogue's
 // index.html. The listing is the record of what exists: the config says what the
 // catalogue is meant to hold, this says what it actually holds right now.
@@ -6460,7 +6461,7 @@ async function loadConfig() {
     const res = await fetch(`${CAT_BASE}builds.yaml`, { cache: 'no-store' });
     if (res.ok) return parseConfig(await res.text());
   } catch (_) { /* served without a catalogue */ }
-  return { project: 'flashmon', builds: [] };
+  return { project: 'flashmon', builds: [], missing: true };
 }
 
 // The images the catalogue actually holds, from its index.html: name -> newest
@@ -6537,6 +6538,7 @@ async function loadCatalogueList() {
 // The brand the catalogue wears. It comes out of the catalogue's own config, so
 // it is re-applied whenever the selected catalogue changes.
 function applyBrand(cfg) {
+  BRANDED = !cfg.missing;
   PROJECT = cfg.project || 'flashmon';
   SLUG = projectSlug(PROJECT);
   HOSTNAME_DEFAULT = (PROJECT.toLowerCase().replace(/[^a-z0-9_]/g, '') || 'flashmon').slice(0, 20);
@@ -6545,9 +6547,12 @@ function applyBrand(cfg) {
 // Re-read the listing and re-evaluate the live offer. Called when the stamp file
 // moves, which is the catalogue telling us it has something new. Branding is
 // left as booted: a catalogue doesn't get to rename the page under a running
-// session (switching catalogue does — see setCatalogue).
+// session (switching catalogue does — see setCatalogue). A page that booted
+// with no config to read has no brand yet, and the image filenames carry the
+// slug, so it takes the first config that turns up.
 async function refreshCatalogue() {
   const [cfg, versions] = await Promise.all([loadConfig(), loadVersions()]);
+  if (!BRANDED && !cfg.missing) applyBrand(cfg);
   BUILDS = cfg.builds;
   BUILD_NAMES = cfg.builds.map((b) => b.name).filter(Boolean);
   VERSIONS = versions;
